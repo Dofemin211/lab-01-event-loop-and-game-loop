@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A small space-flight game for learning how the JavaScript event loop powers smooth animation."
+    />
+    <meta name="theme-color" content="#07111d" />
+    <title>Dogfight — Event Loop Lab</title>
+  </head>
+  <body>
+    <main class="game-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Dogfight home">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span>DOGFIGHT <span class="brand-divider">/</span> LAB 01</span>
+        </a>
+        <p class="topbar-note">A tiny flight simulator for a big JavaScript idea</p>
+        <span class="guide-link">EVENT LOOP / CANVAS</span>
+      </header>
+
+      <section class="flight-deck" aria-label="Space flight game">
+        <canvas id="game" aria-label="Space flight arena. Use the keyboard to fly.">
+          Your browser does not support the Canvas 2D API.
+        </canvas>
+        <div class="flight-label" aria-hidden="true">
+          <span class="status-dot"></span>
+          <span>FLIGHT SIMULATION</span>
+        </div>
+        <div class="coordinate-label" aria-hidden="true">SECTOR 01 · WRAP-AROUND ARENA</div>
+      </section>
+
+      <footer class="controls-bar">
+        <div class="control-group" aria-label="Game controls">
+          <span class="key-hint"><kbd>W</kbd><kbd>↑</kbd><span>THRUST</span></span>
+          <span class="key-hint"><kbd>A</kbd><kbd>←</kbd><span>TURN LEFT</span></span>
+          <span class="key-hint"><kbd>D</kbd><kbd>→</kbd><span>TURN RIGHT</span></span>
+          <span class="key-hint"><kbd>SPACE</kbd><span>BRAKE</span></span>
+          <span class="key-hint"><kbd>R</kbd><span>RESET</span></span>
+        </div>
+        <p class="footer-note">FIXED-STEP PHYSICS <span>·</span> YOUR DISPLAY, YOUR FRAME RATE</p>
+      </footer>
+
+      <section id="experiments" class="experiments" aria-labelledby="experiments-title" hidden>
+        <div class="experiment-heading">
+          <div>
+            <p class="eyebrow">DEVELOPER TOOLS</p>
+            <h1 id="experiments-title">Loop experiments</h1>
+          </div>
+          <span class="experiment-badge">VISIBLE WITH ?experiments=1</span>
+        </div>
+        <div class="experiment-controls">
+          <label>
+            Frame scheduler
+            <select id="scheduler">
+              <option value="raf">requestAnimationFrame (default)</option>
+              <option value="interval">setInterval (16 ms)</option>
+            </select>
+          </label>
+          <label>
+            Simulation timestep
+            <select id="timestep">
+              <option value="fixed">Fixed timestep (default)</option>
+              <option value="variable">Variable timestep (comparison)</option>
+            </select>
+          </label>
+          <label class="checkbox-label">
+            <input id="busy-wait" type="checkbox" />
+            Block the main thread for 100 ms every 60th rendered frame
+          </label>
+          <button id="measure" type="button">Measure for 10 seconds</button>
+          <button id="capture-position" type="button" class="secondary-button">
+            Capture ship position
+          </button>
+          <button id="reset" type="button" class="secondary-button">Reset ship</button>
+        </div>
+        <p class="experiment-hint">
+          For the background-tab test, start a measurement, switch tabs for five seconds, then
+          return. Record actual results in the README; this panel does not invent or save
+          measurements.
+        </p>
+        <pre id="experiment-output" class="experiment-output" aria-live="polite">
+No measurement recorded yet.</pre>
+        <pre id="position-output" class="experiment-output" aria-live="polite">
+Ship position: not captured.</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
