@@ -16,6 +16,9 @@ export function createHomingBehavior({
 
   return {
     targetKind,
+    turnRate,
+    acceleration,
+    maxSpeed,
     update(entity, world, dt) {
       let target = null;
       let nearestDistanceSquared = Infinity;

@@ -1,11 +1,12 @@
 import { Entity } from './entity.js';
+import { createHomingBehavior } from './homing.js';
 import { Vector2 } from './vector.js';
 
 export class Asteroid extends Entity {
   #hp;
 
-  constructor(x = 0, y = 0, { radius = 25, vel = new Vector2(), hp = 2, homing = null } = {}) {
-    super({ pos: new Vector2(x, y), vel, radius, kind: 'asteroid' });
+  constructor(x = 0, y = 0, { id, radius = 25, vel = new Vector2(), hp = 2, homing = null } = {}) {
+    super({ id, pos: new Vector2(x, y), vel, radius, kind: 'asteroid' });
     this.#hp = hp;
     if (homing) {
       this.homing = homing;
@@ -39,5 +40,33 @@ export class Asteroid extends Entity {
       this.pos.y = Math.max(this.radius, Math.min(world.height - this.radius, this.pos.y));
       this.vel.y *= -1;
     }
+  }
+
+  toSnapshot() {
+    return {
+      ...super.toSnapshot(),
+      hp: this.#hp,
+      homing: this.homing
+        ? {
+            targetKind: this.homing.targetKind,
+            turnRate: this.homing.turnRate,
+            acceleration: this.homing.acceleration,
+            maxSpeed: this.homing.maxSpeed,
+          }
+        : null,
+    };
+  }
+
+  static fromSnapshot(snapshot) {
+    const asteroid = new Asteroid(snapshot.pos.x, snapshot.pos.y, {
+      id: snapshot.id,
+      radius: snapshot.radius,
+      vel: snapshot.vel,
+      hp: snapshot.hp,
+      homing: snapshot.homing ? createHomingBehavior(snapshot.homing) : null,
+    });
+    asteroid.angle = snapshot.angle;
+    asteroid.alive = snapshot.alive;
+    return asteroid;
   }
 }

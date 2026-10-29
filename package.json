@@ -5,7 +5,8 @@
   "type": "module",
   "workspaces": [
     "client",
-    "server"
+    "server",
+    "shared"
   ],
   "scripts": {
     "dev": "node scripts/dev.js",
@@ -13,14 +14,16 @@
     "dev:server": "node --env-file-if-exists=.env --watch server/src/index.js",
     "build": "npm run build --workspace @dogfight/client",
     "start": "node --env-file-if-exists=.env server/src/index.js",
-    "test": "npm run test:client && npm run test:server",
+    "test": "npm run test:shared && npm run test:client && npm run test:server",
+    "test:shared": "npm run test --workspace @dogfight/shared",
     "test:client": "npm run test --workspace @dogfight/client",
     "test:server": "npm run test --workspace @dogfight/server",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "experiment:backpressure": "npm run experiment:backpressure --workspace @dogfight/server",
-    "experiment:unsafe-backpressure": "npm run experiment:unsafe-backpressure --workspace @dogfight/server"
+    "experiment:unsafe-backpressure": "npm run experiment:unsafe-backpressure --workspace @dogfight/server",
+    "experiment:netcode": "node scripts/network-benchmark.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

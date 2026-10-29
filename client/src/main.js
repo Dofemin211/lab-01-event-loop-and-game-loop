@@ -2,6 +2,8 @@ import './style.css';
 import { createAudio } from './audio.js';
 import { loadAll, loadJson, withRetry } from './assets/loader.js';
 import { MultiplayerConnection } from './connection.js';
+import { NetworkEmulator } from './network-emulator.js';
+import { ClientNetcode } from './netcode.js';
 import { createInput } from './input.js';
 import { createLoop } from './loop.js';
 import { createGameEventTarget, emitGameEvent } from './events.js';
@@ -10,9 +12,11 @@ import { Lobby } from './lobby.js';
 import { createCanvas } from './render/canvas.js';
 import { connectLobbyUI } from './render/lobby-ui.js';
 import { createStarfield, drawLoadingScreen, drawWorldScene } from './render/draw.js';
-import { createGame } from './sim/game.js';
+import { decodeBinary, encodeBinary, measureJsonBytes } from '@dogfight/shared/codec';
 
 const canvasElement = document.querySelector('#game');
+const WORLD_WIDTH = 960;
+const WORLD_HEIGHT = 600;
 if (!(canvasElement instanceof HTMLCanvasElement)) {
   throw new Error('The game canvas is missing from index.html.');
 }
@@ -46,12 +50,12 @@ const lobby = new Lobby();
 const multiplayer = new MultiplayerConnection();
 let lobbyUI;
 let session = null;
+let netcode = null;
 let roomConfiguration = null;
 let pendingRoomSelection = null;
 let assets = {};
-let arenaDefinition = { asteroidCount: 6, seed: 2025 };
 let previousStates = new Map();
-let stars = createStarfield(surface.width, surface.height);
+let stars = createStarfield(WORLD_WIDTH, WORLD_HEIGHT);
 let renderedFrames = 0;
 let busyWaitEnabled = false;
 let measurement = null;
@@ -63,6 +67,9 @@ let loadingProgress = 0;
 let loadingStatus = 'Starting asset requests…';
 let loadingError = null;
 let experimentsEnabled = false;
+let networkExperimentsEnabled = false;
+let networkEmulator = null;
+let networkToolsConfigured = false;
 
 function showLoadingFrame() {
   drawLoadingScreen(surface.context, surface.width, surface.height, {
@@ -154,7 +161,6 @@ async function loadGameAssets({ failureMode = '', automaticAbort = false } = {})
       },
     });
     assets = result.assets;
-    arenaDefinition = assets.arena;
     audio.setBuffers({
       shoot: assets.shoot,
       hit: assets.hit,
@@ -189,55 +195,63 @@ async function loadGameAssets({ failureMode = '', automaticAbort = false } = {})
 }
 
 function createSession(configuration = roomConfiguration) {
-  const arena = {
-    ...arenaDefinition,
-    ...(configuration?.room?.arena ?? configuration?.arena ?? {}),
-  };
-  session = createGame({
-    ...arena,
-    width: surface.width,
-    height: surface.height,
-    emit: (type, detail) => emitGameEvent(eventTarget, type, detail),
+  roomConfiguration = configuration;
+  const player = configuration?.player;
+  if (!player) {
+    throw new Error('The server did not assign a player identity to this room.');
+  }
+  netcode = new ClientNetcode({
+    width: 960,
+    height: 600,
+    sendInput: (command) => multiplayer.sendInput(command),
+    interpolationDelayMs: Number(document.querySelector('#interpolation-delay').value),
   });
+  netcode.setIdentity(player);
+  session = { player };
   previousStates = new Map();
 }
 
 function resetShip() {
-  createSession();
+  netcode?.resetPrediction();
 }
 
 function simulate(dt) {
   if (input.justPressed('KeyR')) {
     resetShip();
   }
-  previousStates = new Map(
-    [...session.world].map((entity) => [
-      entity.id,
-      { x: entity.pos.x, y: entity.pos.y, angle: entity.angle },
-    ]),
-  );
-  session.step(dt, input);
+  netcode?.step(dt, input);
   input.endFrame();
 }
 
 function render(alpha, stats) {
+  const entities = netcode?.renderEntities(performance.now()) ?? [];
+  const ownEntity = entities.find((entity) => entity.id === netcode?.localEntityId) ?? null;
+  const renderWorld = {
+    *[Symbol.iterator]() {
+      yield* entities;
+    },
+  };
+  surface.context.save();
+  surface.context.scale(surface.width / WORLD_WIDTH, surface.height / WORLD_HEIGHT);
   drawWorldScene(
     surface.context,
-    surface.width,
-    surface.height,
+    WORLD_WIDTH,
+    WORLD_HEIGHT,
     stars,
-    session.world,
+    renderWorld,
     stats,
     {
-      score: session.score,
-      player: session.player,
-      respawnRemaining: session.respawnRemaining,
+      score: ownEntity?.score ?? 0,
+      player: ownEntity,
+      respawnRemaining: ownEntity ? 0 : 0,
     },
     previousStates,
     alpha,
     performance.now(),
     assets,
   );
+  surface.context.restore();
+  updateNetgraph();
   renderedFrames += 1;
 
   if (measurement && stats.frameIntervalMs > 0) {
@@ -266,8 +280,143 @@ function startGame(selection) {
   document.querySelector('.coordinate-label').hidden = false;
   document.querySelector('#experiments').hidden = !experimentsEnabled;
   multiplayerPanel.hidden = false;
+  document.querySelector('#netgraph').hidden = !networkExperimentsEnabled;
+  if (networkExperimentsEnabled) configureNetworkTools();
   void audio.unlock();
-  startLoop();
+  if (!gameLoop) startLoop();
+}
+
+function updateNetgraph() {
+  if (!netcode || !networkExperimentsEnabled) return;
+  const latest = netcode.buffer.latest;
+  const age = latest ? Math.max(0, performance.now() - latest.receivedAt) : null;
+  const traffic = multiplayer.traffic();
+  document.querySelector('#netgraph-codec').textContent = multiplayer.codec.toUpperCase();
+  document.querySelector('#netgraph-rtt').textContent =
+    multiplayer.rttMs === null ? '-- ms' : `${multiplayer.rttMs.toFixed(1)} ms`;
+  document.querySelector('#netgraph-age').textContent =
+    age === null ? '-- ms' : `${age.toFixed(1)} ms`;
+  document.querySelector('#netgraph-traffic').textContent =
+    `${traffic.inboundKilobytesPerSecond.toFixed(1)} / ${traffic.outboundKilobytesPerSecond.toFixed(1)} KB/s`;
+  document.querySelector('#netgraph-pending').textContent = String(netcode.pendingCount);
+  document.querySelector('#netgraph-correction').textContent =
+    `${netcode.correction.toFixed(2)} px`;
+  document.querySelector('#netgraph-interpolation').textContent =
+    `${netcode.interpolationDelayMs} ms`;
+}
+
+function configureNetworkTools() {
+  if (networkToolsConfigured) return;
+  networkToolsConfigured = true;
+  const elements = {
+    delay: document.querySelector('#network-delay'),
+    jitter: document.querySelector('#network-jitter'),
+    loss: document.querySelector('#network-loss'),
+    interpolation: document.querySelector('#interpolation-delay'),
+    delayValue: document.querySelector('#delay-value'),
+    jitterValue: document.querySelector('#jitter-value'),
+    lossValue: document.querySelector('#loss-value'),
+    interpolationValue: document.querySelector('#interpolation-value'),
+  };
+  const determinismBreak = document.querySelector('#break-determinism');
+  const updateSettings = () => {
+    networkEmulator.configure({
+      delayMs: Number(elements.delay.value),
+      jitterMs: Number(elements.jitter.value),
+      lossPercent: Number(elements.loss.value),
+    });
+    netcode?.setInterpolationDelay(Number(elements.interpolation.value));
+    elements.delayValue.value = `${elements.delay.value} ms`;
+    elements.jitterValue.value = `${elements.jitter.value} ms`;
+    elements.lossValue.value = `${elements.loss.value}%`;
+    elements.interpolationValue.value = `${elements.interpolation.value} ms`;
+  };
+  for (const element of [elements.delay, elements.jitter, elements.loss, elements.interpolation]) {
+    element.addEventListener('input', updateSettings);
+  }
+  determinismBreak.addEventListener('change', () => {
+    netcode?.setDeterminismBreak(determinismBreak.checked);
+  });
+  document.querySelector('#network-codec').value = multiplayer.codec;
+  document.querySelector('#measure-codecs').addEventListener('click', measureCodecs);
+  updateSettings();
+}
+
+function measureCodecs() {
+  const snapshot = {
+    type: 'snapshot',
+    tick: 900,
+    acks: Array.from({ length: 4 }, (_, index) => ({ entityId: index + 1, seq: 300 })),
+    entities: Array.from({ length: 4 }, (_, index) => ({
+      id: index + 1,
+      kind: 'ship',
+      x: 120 + index * 100,
+      y: 180 + index * 40,
+      vx: 42.125,
+      vy: -11.75,
+      angle: -1.57075,
+      radius: 13,
+      hp: 3,
+      thrust: 1,
+      invulnerableTime: 0,
+      shield: false,
+      ownerId: 0,
+      ttl: 0,
+      commandSeq: 0,
+      score: index * 100,
+    })),
+  };
+  const jsonSnapshot = { version: 0, ...snapshot };
+  const inputCommand = {
+    type: 'input',
+    seq: 300,
+    tick: 900,
+    turn: 1,
+    thrust: true,
+    brake: false,
+    fire: false,
+  };
+  const ping = { type: 'ping', sentAt: 12.5 };
+  const repetitions = 10_000;
+  const json = JSON.stringify(jsonSnapshot);
+  const binary = encodeBinary(snapshot);
+  const jsonInputBytes = new TextEncoder().encode(
+    JSON.stringify({ version: 0, ...inputCommand }),
+  ).byteLength;
+  const binaryInputBytes = encodeBinary(inputCommand).byteLength;
+  const jsonPingBytes = new TextEncoder().encode(
+    JSON.stringify({ version: 0, ...ping }),
+  ).byteLength;
+  const binaryPingBytes = encodeBinary(ping).byteLength;
+  const jsonStarted = performance.now();
+  for (let index = 0; index < repetitions; index += 1) {
+    JSON.parse(json);
+    JSON.stringify(jsonSnapshot);
+  }
+  const jsonElapsed = performance.now() - jsonStarted;
+  const binaryStarted = performance.now();
+  for (let index = 0; index < repetitions; index += 1) {
+    decodeBinary(binary);
+    encodeBinary(snapshot);
+  }
+  const binaryElapsed = performance.now() - binaryStarted;
+  document.querySelector('#netcode-measurement').textContent = JSON.stringify(
+    {
+      browser: navigator.userAgent,
+      repetitions,
+      entities: snapshot.entities.length,
+      jsonSnapshotBytes: measureJsonBytes(jsonSnapshot),
+      binaryBytes: binary.byteLength,
+      jsonEncodeDecodeUsPerSnapshot: Number(((jsonElapsed * 1000) / repetitions).toFixed(2)),
+      binaryEncodeDecodeUsPerSnapshot: Number(((binaryElapsed * 1000) / repetitions).toFixed(2)),
+      jsonDownKBpsAt30Hz: Number(((measureJsonBytes(jsonSnapshot) * 30) / 1024).toFixed(2)),
+      binaryDownKBpsAt30Hz: Number(((binary.byteLength * 30) / 1024).toFixed(2)),
+      jsonUpKBpsAt30Hz: Number(((jsonInputBytes * 30 + jsonPingBytes) / 1024).toFixed(2)),
+      binaryUpKBpsAt30Hz: Number(((binaryInputBytes * 30 + binaryPingBytes) / 1024).toFixed(2)),
+    },
+    null,
+    2,
+  );
 }
 
 function renderRoster(message) {
@@ -303,16 +452,21 @@ multiplayer.addEventListener('state', (event) => {
   }
 });
 multiplayer.addEventListener('joined', (event) => {
-  if (!pendingRoomSelection) {
+  if (netcode && !pendingRoomSelection) {
+    netcode.setIdentity(event.detail.player);
     return;
   }
   const selection = {
     room: event.detail.room,
     playerName: pendingRoomSelection.playerName,
+    player: event.detail.player,
   };
   pendingRoomSelection = null;
   emitGameEvent(eventTarget, 'roomJoined', selection);
   startGame(selection);
+});
+multiplayer.addEventListener('snapshot', (event) => {
+  netcode?.receiveSnapshot(event.detail, performance.now());
 });
 multiplayer.addEventListener('roster', (event) => renderRoster(event.detail));
 multiplayer.addEventListener('chat', (event) => renderChat(event.detail.message));
@@ -384,16 +538,16 @@ function configureExperiments() {
   controls.reset.addEventListener('click', resetShip);
   controls.capturePosition.addEventListener('click', () => {
     const settings = readExperimentSettings();
-    const player = session?.player;
+    const player = netcode?.predicted;
     controls.positionOutput.textContent = JSON.stringify(
       {
         timestep: settings.variableTimestep ? 'variable' : 'fixed',
-        score: session?.score ?? 0,
-        hp: player?.hp ?? 0,
-        x: Number((player?.pos.x ?? 0).toFixed(2)),
-        y: Number((player?.pos.y ?? 0).toFixed(2)),
-        vx: Number((player?.vel.x ?? 0).toFixed(2)),
-        vy: Number((player?.vel.y ?? 0).toFixed(2)),
+        score: 0,
+        hp: 0,
+        x: Number((player?.x ?? 0).toFixed(2)),
+        y: Number((player?.y ?? 0).toFixed(2)),
+        vx: Number((player?.vx ?? 0).toFixed(2)),
+        vy: Number((player?.vy ?? 0).toFixed(2)),
       },
       null,
       2,
@@ -529,7 +683,9 @@ function connectLobby() {
       onJoin: (selection) => {
         pendingRoomSelection = selection;
         void audio.unlock();
-        multiplayer.connect(selection.room.id, selection.playerName);
+        const parameters = new URLSearchParams(window.location.search);
+        const codec = parameters.get('codec') === 'json' ? 'json' : 'binary';
+        multiplayer.connect(selection.room.id, selection.playerName, { codec });
       },
     },
   );
@@ -554,6 +710,14 @@ if (import.meta.env.DEV) {
 }
 
 configureExperiments();
+networkExperimentsEnabled =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('net') === '1';
+networkEmulator = new NetworkEmulator();
+multiplayer.setNetworkEmulator(networkExperimentsEnabled ? networkEmulator : null);
+if (networkExperimentsEnabled) {
+  document.querySelector('#netcode-tools').hidden = false;
+}
+window.setInterval(() => multiplayer.sendPing(), 1000);
 connectLobby();
 lobbyUI.hide();
 showLoadingFrame();
@@ -567,8 +731,7 @@ void loadGameAssets({
 });
 
 window.addEventListener('resize', () => {
-  stars = createStarfield(surface.width, surface.height);
-  session?.resize(surface.width, surface.height);
+  stars = createStarfield(WORLD_WIDTH, WORLD_HEIGHT);
   previousStates = new Map();
   if (!session) {
     showLoadingFrame();

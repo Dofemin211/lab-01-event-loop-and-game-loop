@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Bullet } from '../src/sim/bullet.js';
-import { GameSession } from '../src/sim/game.js';
-import { Vector2 } from '../src/sim/vector.js';
+import { Bullet } from '@dogfight/shared/sim/bullet';
+import { GameSession } from '@dogfight/shared/sim/game';
+import { Vector2 } from '@dogfight/shared/sim/vector';
 
 function idleInput() {
   return { isDown: () => false };

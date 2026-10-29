@@ -5,6 +5,7 @@ import { MatchLogManager } from './log/matchlog.js';
 import { createConfig } from './config.js';
 import { defaultRooms, RoomManager } from './rooms.js';
 import { installWebSocketHandlers } from './ws.js';
+import { MatchManager } from './match.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -18,6 +19,7 @@ export function createApplication({
     maxPlayersPerRoom: config.maxPlayersPerRoom,
   });
   const logManager = new MatchLogManager({ logDir: config.logDir, logger });
+  const matchManager = new MatchManager(roomManager);
   roomManager.on('roomCreated', (room) => {
     room.matchLog = logManager.attach(room);
     room.replayId = room.matchLog.fileId;
@@ -26,7 +28,7 @@ export function createApplication({
     roomManager.createRoom(room);
   }
 
-  const server = createHttpServer({ config, roomManager, logger });
+  const server = createHttpServer({ config, roomManager, matchManager, logger });
   const wss = createWebSocketServer(config);
   attachWebSocketUpgrade(server, wss, logger);
   const webSocketService = installWebSocketHandlers(wss, roomManager, config, logger);
@@ -37,6 +39,7 @@ export function createApplication({
     server,
     wss,
     roomManager,
+    matchManager,
     logManager,
     async start() {
       if (server.listening) {
@@ -92,6 +95,7 @@ export function createApplication({
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     await logManager.close();
+    matchManager.close();
     roomManager.close();
     if (server.listening) {
       await new Promise((resolve) => server.close(() => resolve()));

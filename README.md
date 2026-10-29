@@ -1,6 +1,6 @@
-# Dogfight — JavaScript Game Labs 01–04
+# Dogfight — JavaScript Game Labs 01–05
 
-A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 added cancellable asynchronous asset loading and Web Audio; Lab 04 adds a Node.js HTTP/WebSocket server and streamed match replays while keeping Labs 01–03 in the same game.
+A continuing multiplayer space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 added cancellable asynchronous asset loading and Web Audio; Lab 04 added the Node.js HTTP/WebSocket server and streamed match replays; Lab 05 adds shared deterministic simulation, authoritative real-time matches, prediction/reconciliation, interpolation, network experiments, and a binary codec.
 
 ## Run it
 
@@ -19,6 +19,8 @@ npm start
 ```
 
 The production server listens on `http://127.0.0.1:3000` by default. Configuration is read from `.env` if present (see the Lab 04 section); do not commit secrets or local settings.
+
+For multiplayer, open the Vite URL in two browser windows, enter different pilot names, and join the same room. The normal client uses binary snapshots; use `?net=1` to expose Lab 05's developer-only network tools.
 
 Run the quality checks from the project folder:
 
@@ -53,17 +55,21 @@ eslint.config.js
 README.md
 scripts/
   dev.js                    # Starts/stops the HTTP server and Vite together
+  network-benchmark.js      # Reproducible Node JSON/binary comparison
 client/
   package.json
   index.html
   vite.config.js            # Proxies /api and /ws to the Node server
-  src/                      # Game, assets, simulation, rendering, lobby, and audio
-  tests/                    # Client tests, including the Labs 01–03 regressions
+  src/                      # Game, assets, netcode, rendering, lobby, and audio
+    netcode.js              # Prediction, reconciliation, and snapshot interpolation
+    network-emulator.js     # Ordered per-direction delay, jitter, and loss
+  tests/                    # Client tests, including earlier-lab regressions
   public/assets/            # Manifest, arena, sprite sheet, and sound effects
 server/
   package.json
   src/
     index.js                # HTTP + WebSocket app composition and graceful shutdown
+    match.js                # Authoritative 30 Hz room simulation and snapshots
     config.js               # Validated environment configuration
     http.js                 # Static files, room API, health, and streaming replay routes
     protocol.js             # Versioned JSON protocol validation
@@ -75,13 +81,21 @@ server/
       backpressure-experiment.js
       unsafe-backpressure-demo.js  # Explicitly capped teaching-only example
   test/                     # node:test coverage for HTTP, WebSocket, and streams
+shared/
+  package.json              # DOM-free @dogfight/shared workspace
+  src/
+    codec.js                # JSON and versioned DataView packet codecs
+    protocol.js             # Shared input validation and key mapping
+    prng.js                 # Seeded Mulberry32 generator
+    sim/                    # Canonical simulation used by browser and server
+  test/                     # Node-only deterministic and codec tests
 evidence/
   lab04-rss-samples.csv     # Raw 188-point RSS record from the documented run
 ```
 
-`client/src/sim/` does not import the DOM, canvas, audio, or HUD modules. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
+`shared/src/sim/` is the canonical simulation package. It does not import the DOM, canvas, audio, or HUD modules, and both Node and browser tests import it directly. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures previous-state data for interpolation. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 
-`createInput(target)` in `client/src/input.js` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances. The browser package and the Node server are separate npm workspaces: the development launcher runs both, while the production Node process serves `client/dist` together with the HTTP and WebSocket APIs.
+`createInput(target)` in `client/src/input.js` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances. The browser, server, and shared simulation are separate npm workspaces: the development launcher runs Vite and Node together, while the production Node process serves `client/dist` together with the HTTP and WebSocket APIs.
 
 ## Event loop, in beginner-friendly terms
 
@@ -762,7 +776,7 @@ Root commands:
 | `npm run dev`                                                   | Run the Node server and Vite together                                                           |
 | `npm start`                                                     | Serve the built client and API from Node                                                        |
 | `npm run build`                                                 | Create the client production bundle                                                             |
-| `npm test`                                                      | Run client and server test suites                                                               |
+| `npm test`                                                      | Run shared, client, and server test suites                                                      |
 | `npm run lint`                                                  | ESLint for both workspaces                                                                      |
 | `npm run format:check`                                          | Prettier check for tracked project files                                                        |
 | `npm run experiment:backpressure -- --size-mb=200 --delay-ms=4` | Generate a bounded replay, stream it to a deliberately slow reader, and save actual RSS samples |
@@ -902,3 +916,108 @@ The `npm test` suite is reproducible and does not require external network acces
 - [x] Create the Lab 04 commit and `lab-04` tag locally after final verification; do not push without permission.
 
 The optional gzip-compressed match logs, live SSE spectator, and Fastify port are Lab 04 stretch items and are not implemented. No manual result or RSS graph is fabricated.
+
+## Lab 05 — Real-Time Networking
+
+Lab 05 continues the same game. The browser and Node server import one simulation package; the server owns the match state, while each browser predicts only its own ship for immediate controls and interpolates the other entities from server snapshots.
+
+### Run two players
+
+From the project root:
+
+```powershell
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173/?net=1` in two separate browser windows or tabs. Select the same room in both, use different pilot names, and join. Use `W`/`↑`, `A`/`←`, and `D`/`→` to fly; `F` fires. The room roster and chat from Lab 04 remain available beside the canvas. To run the production server instead, use `npm run build` followed by `npm start`; it serves the client and WebSocket endpoint on port 3000 by default.
+
+### Architecture and authority
+
+```text
+shared/src/sim/
+  Vector2, Entity, Ship, World, collision, pickups, homing, explosions
+  seeded Mulberry32 PRNG + serializable snapshots/restoration
+shared/src/
+  protocol.js   shared input schema/key mapping
+  codec.js      JSON and binary message encoders/decoders
+server/src/
+  match.js      independent room simulation, fixed 1/30 s steps, snapshots and ACKs
+  ws.js         validated inputs, chat, heartbeat, rate/size limits, reconnect boundary
+  http.js       room APIs and /api/stats
+client/src/
+  connection.js       WebSocket lifecycle, codec choice, traffic and RTT samples
+  netcode.js           local prediction, ACK-based replay, correction smoothing, interpolation
+  network-emulator.js  developer-only ordered packet delay, jitter and loss
+  main.js              canvas/HUD, room lifecycle, netgraph and experiment controls
+```
+
+The shared simulation is plain JavaScript with no DOM, Canvas, `Math.random()`, or wall-clock reads. Its seeded PRNG and snapshots include entity IDs and PRNG state so a restored `World` can continue deterministically. Each room's `Match` advances at a fixed 30 Hz using an absolute `performance.now()` deadline and `setTimeout`; `/api/stats` reports tick rate, average/last tick duration, jitter and active players. The server validates sequenced movement/fire commands and ignores client-supplied position values. Snapshots carry a `tick`, serialized entities, and a per-player `lastProcessedSeq` ACK.
+
+On each 30 Hz client input tick, `ClientNetcode` immediately applies the shared ship integrator locally and records the command by `seq`. A snapshot replaces that predicted ship with its authoritative state, removes acknowledged commands, then replays newer commands in order. Small differences are eased visually. Other ships use a tick-buffer and a configurable interpolation delay; the renderer blends between snapshots and wraps across arena edges by the shortest path. Entity IDs make joins, departures, respawns, bullets, pickups and explosions visible as server state changes. Own shots appear locally and are removed when the matching authoritative bullet (`ownerId`, `commandSeq`) arrives.
+
+Prediction favors responsive controls but can briefly disagree with authority. Interpolation favors smooth remote motion but deliberately displays it slightly in the past. Neither client prediction nor a deterministic shared simulation makes the client trustworthy: the server remains the source of truth and receives input commands, never claimed coordinates. Determinism helps reproducible replay/reconciliation, but it does not prevent a modified client from sending dishonest inputs; server-side validation, movement limits, rate limits and authoritative collision resolution are still required.
+
+### Version 1 binary packet format
+
+All multibyte numeric fields are little-endian. `DataView` writes and reads the binary packets; JSON fallback uses UTF-8 `TextEncoder`/`TextDecoder`. The browser sets `WebSocket.binaryType = "arraybuffer"`; the Node WebSocket boundary accepts `Buffer` frames. JSON remains selectable in the `?net=1` tools for comparison.
+
+| Packet          | Layout (byte sizes exclude no fields)                                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Common header   | `version:u8`, `type:u8`                                                                                                                                                                 |
+| Input           | header (2), `seq:u32`, `tick:u32`, `turn:i8`, `flags:u8`; flags bits 0–2 are thrust, brake, fire                                                                                        |
+| Ping            | header (2), `sentAt:f64`                                                                                                                                                                |
+| Pong            | header (2), `tick:u32`, `sentAt:f64`                                                                                                                                                    |
+| Snapshot header | header (2), `tick:u32`, `entityCount:u16`, `ackCount:u16` (10 bytes total)                                                                                                              |
+| ACK record      | `entityId:u32`, `seq:u32` (8 bytes)                                                                                                                                                     |
+| Entity record   | `id:u32`, `kind:u8`, `flags:u8`, `x/y/vx/vy/radius:f32`, `angle:i16`, `hp:u8`, `reserved:u8`, `ownerId:u32`, `ttl:f32`, `invulnerability:f32`, `commandSeq:u32`, `score:u32` (50 bytes) |
+
+Entity kind IDs are assigned in order: ship 1, asteroid 2, bullet 3, pickup 4, explosion 5. The signed angle is normalized to `[-π, π]` and quantized at 10,000 units per radian (maximum rounding error about `0.00005` radians). Entity flag bits 0, 1, and 2 mean thrust, invulnerable, and shield; pickup effects use bits 3–4 (`1` shield, `2` rapid-fire, `3` repair). Reserved bits, invalid effect/kind combinations, unsupported versions/types, wrong lengths, excessive counts, and out-of-range numeric fields are rejected. The JSON codec is the comparison/fallback representation; binary is the normal game choice.
+
+### Reproducible experiments and recorded results
+
+#### Network impairment and determinism
+
+The **Network experiments** panel is only shown by `?net=1`. Set one-way delay, jitter, and loss sliders while connected; the emulator affects both incoming and outgoing frames for that browser only. Delivery is serialized per direction, even when a timer callback runs late, so jitter cannot reorder commands. Set interpolation delay live from its slider. For a controlled determinism violation, enable **Inject 1 px of client-only prediction drift per tick**; it changes only the local prediction, not shared simulation or server state. Disable it after the trial.
+
+| Trial                           | Conditions                                                                                                                  | Actual observation from this workspace                                                                                                                                                                                                                                                 |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordered delivery regression     | Automated fake-timer test with 100 ms delay and ±30 ms jitter, including an overdue timer                                   | `npm run test:client`: late callback did not allow the second packet to overtake the first                                                                                                                                                                                             |
+| Two-browser network run         | Two integrated-browser pages in one room; Beta set to 100 ms, ±30 ms jitter, 2% loss; Alpha unmodified; Beta thrust for 5 s | Both pages showed two pilots; Alpha's canvas showed the remote ship move. Beta remained connected after the queue fix. The observed command trace covered seq 1–553 with eight intentional packet-loss gaps and no reordered sequence; the server no longer rejected sequence numbers. |
+| Netgraph sample during that run | Same settings                                                                                                               | RTT 208.6 ms, snapshot age 30.7 ms, inbound/outbound 4.9/0.4 KB/s, 7 pending inputs, displayed correction 8.59 px. A later sample during continued movement showed RTT 195.3 ms. These are point-in-time samples, not averages.                                                        |
+| Determinism-break control       | Delay/jitter/loss reset to 0; drift toggle on for about 2 s                                                                 | RTT 0.8 ms, correction display 1.00 px, pending inputs 0; shared simulation and server were not modified by the control.                                                                                                                                                               |
+
+The packet-loss trace showed the intended sequence gaps; ordered delivery prevented regressions that had previously caused `Input sequence must increase by no more than 256`. The queue is tested directly and was rechecked with both browser clients after the fix. The browser checks used two integrated-browser pages (not two separate OS/browser profiles), and the screenshot evidence was viewed but not saved as a project image.
+
+#### JSON and binary costs
+
+Run the server-side benchmark with `npm run experiment:netcode`; the browser version is **Compare JSON and binary snapshots** in the network panel. Both use the same generated snapshot per trial, 10,000 repetitions, a 30 Hz downlink estimate, and 30 Hz input plus ping uplink estimate. Sizes and timings depend on snapshot size and runtime; do not compare timings across machines as universal constants.
+
+| Measurement                                      | Node v22.14.0, 24 entities / 4 ACKs | Integrated browser, 4 entities / 4 ACKs |
+| ------------------------------------------------ | ----------------------------------: | --------------------------------------: |
+| Snapshot size, JSON → binary                     |                   5,223 B → 1,242 B |                           934 B → 242 B |
+| Downlink estimate at 30 Hz, JSON → binary        |                 153.02 → 36.39 KB/s |                       27.36 → 7.09 KB/s |
+| Uplink estimate, JSON → binary                   |                    3.03 → 0.36 KB/s |                        2.94 → 0.36 KB/s |
+| Encode + decode time per snapshot, JSON → binary |                    69.51 → 19.15 µs |                          4.23 → 6.38 µs |
+
+Binary reduced bytes in both measurements. It was faster for the larger Node snapshot, but slower for the small four-entity browser sample; fewer bytes do not guarantee faster encode/decode for every runtime or message size. The browser and Node benchmark snapshots have different entity counts, so compare JSON against binary within a column, not across the two columns.
+
+### Requirement cross-check
+
+| Lab and requirement                                                                                  | Implementation                                                                                | Status                                     | Actual verification                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Lab 01: fixed-step `requestAnimationFrame` loop, clamped accumulator, interpolation and loop metrics | `client/src/loop.js` `createLoop`; HUD in `client/src/render/draw.js`                         | Complete                                   | Preserved by client regression suite; `npm test` includes loop behavior.                                                                                     |
+| Lab 01: closure-based key input, pure ship physics and arena wrap                                    | `client/src/input.js`; Lab 01 API in `shared/src/sim/ship.js` and `arena.js`                  | Complete                                   | Preserved by input/simulation regression tests.                                                                                                              |
+| Lab 01: canvas, DPR/resize, smooth angle rendering, starfield and thrust flame                       | `client/src/render/canvas.js`, `draw.js`, `client/src/main.js`                                | Complete                                   | Client rendering tests; two-client Canvas visibly rendered the remote ship.                                                                                  |
+| Lab 01: busy-wait, scheduler and fixed/variable experiments                                          | `client/src/loop.js`, `client/src/main.js`, `client/index.html`; Lab 01 README sections above | Complete; some trials require manual rerun | The README contains measured prior runs; background-tab and 6× throttling trials remain manual, not claimed as retested in Lab 05.                           |
+| Lab 05: one DOM-free deterministic simulation and snapshot restoration                               | `shared/src/sim/`; `shared/test/simulation.test.js`                                           | Complete                                   | Node import without `document`, seeded equality, continuation after restoration, and all entity kinds tested.                                                |
+| Lab 05: authoritative 30 Hz server, input validation, sequence ACKs and stats                        | `server/src/match.js`, `server/src/ws.js`, `server/src/http.js`                               | Complete                                   | Match and WebSocket tests; active local server reported 30 Hz during the browser session.                                                                    |
+| Lab 05: actual multiplayer entities and Lab 04 lobby/chat/reconnect/heartbeat                        | `server/src/match.js`, `client/src/connection.js`, `client/src/main.js`                       | Complete                                   | Two integrated-browser pages joined one room, shared roster, and canvas showed the other moving ship; existing server tests cover chat/heartbeat/disconnect. |
+| Lab 05: prediction, reconciliation, smoothing and remote interpolation                               | `client/src/netcode.js` `ClientNetcode`, `SnapshotBuffer`                                     | Complete                                   | Client netcode tests plus actual movement under the recorded impaired-network run.                                                                           |
+| Lab 05: configurable delay/jitter/loss, netgraph and determinism control                             | `client/src/network-emulator.js`, `client/src/main.js`, `client/index.html`                   | Complete                                   | Browser run at 100/±30/2 and drift-toggle sample recorded above; automated overdue-timer ordering test passes.                                               |
+| Lab 05: validated versioned DataView codec, JSON comparison and quantized angles                     | `shared/src/codec.js`; `shared/test/codec.test.js`                                            | Complete                                   | Binary/JSON round-trip, malformed packet/range and repair-pickup effect tests pass; both Node and browser benchmarks actually run.                           |
+| Lab 05: GIF/screenshot evidence of two independent windows                                           | Manual screen recording                                                                       | Needs manual capture                       | The available browser tool produced viewable screenshots but no saved GIF recorder. Capture the two windows side by side as described below.                 |
+
+### Capture your own visual evidence
+
+The integrated browser can show and capture a screenshot, but this environment did not provide a GIF recording/saving tool. For submission evidence, run `npm run dev`, open two independent browser windows at `http://localhost:5173/?net=1`, join the same room with distinct names, and start a screen recording or GIF capture. Show both full canvases at once while one player holds thrust and the other sees the remote ship move. For the impaired-network shot, set 100 ms delay, ±30 ms jitter and 2% loss in one client's panel and keep its netgraph visible; record the browser, duration and settings. Save the real files under `evidence/` and note their filenames; do not use a mock or redraw the UI.

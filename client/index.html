@@ -15,7 +15,7 @@
       <header class="topbar">
         <a class="brand" href="/" aria-label="Dogfight home">
           <span class="brand-mark" aria-hidden="true">✦</span>
-          <span>DOGFIGHT <span class="brand-divider">/</span> LABS 01–04</span>
+          <span>DOGFIGHT <span class="brand-divider">/</span> LABS 01–05</span>
         </a>
         <p class="topbar-note">A tiny flight simulator for a big JavaScript idea</p>
         <span class="guide-link">EVENT LOOP / CANVAS</span>
@@ -25,6 +25,15 @@
         <canvas id="game" aria-label="Space flight arena. Use the keyboard to fly.">
           Your browser does not support the Canvas 2D API.
         </canvas>
+        <aside id="netgraph" class="netgraph" aria-label="Network diagnostics" hidden>
+          <p class="netgraph-title">NETGRAPH <span id="netgraph-codec">BINARY</span></p>
+          <p>RTT <strong id="netgraph-rtt">-- ms</strong></p>
+          <p>Snapshot age <strong id="netgraph-age">-- ms</strong></p>
+          <p>In / out <strong id="netgraph-traffic">0.0 / 0.0 KB/s</strong></p>
+          <p>Pending inputs <strong id="netgraph-pending">0</strong></p>
+          <p>Correction <strong id="netgraph-correction">0.0 px</strong></p>
+          <p>Interpolation <strong id="netgraph-interpolation">100 ms</strong></p>
+        </aside>
         <div id="loading-actions" class="loading-actions" hidden>
           <p id="loading-message" role="status" aria-live="polite"></p>
           <button id="retry-loading" type="button">Retry loading</button>
@@ -161,6 +170,53 @@ No measurement recorded yet.</pre>
 Ship position: not captured.</pre>
         <pre id="asset-measurement-output" class="experiment-output" aria-live="polite">
 Asset loading comparison: not measured.</pre>
+      </section>
+      <section id="netcode-tools" class="experiments" aria-labelledby="netcode-title" hidden>
+        <div class="experiment-heading">
+          <div>
+            <p class="eyebrow">DEVELOPER TOOLS</p>
+            <h1 id="netcode-title">Network experiments</h1>
+          </div>
+          <span class="experiment-badge">VISIBLE WITH ?net=1</span>
+        </div>
+        <div class="experiment-controls">
+          <label>
+            One-way packet delay: <output id="delay-value">0 ms</output>
+            <input id="network-delay" type="range" min="0" max="200" step="10" value="0" />
+          </label>
+          <label>
+            Jitter: ±<output id="jitter-value">0 ms</output>
+            <input id="network-jitter" type="range" min="0" max="100" step="5" value="0" />
+          </label>
+          <label>
+            Packet loss: <output id="loss-value">0%</output>
+            <input id="network-loss" type="range" min="0" max="10" step="0.5" value="0" />
+          </label>
+          <label class="checkbox-label">
+            <input id="break-determinism" type="checkbox" />
+            Inject 1 px of client-only prediction drift per tick
+          </label>
+          <label>
+            Interpolation delay: <output id="interpolation-value">100 ms</output>
+            <input id="interpolation-delay" type="range" min="0" max="300" step="10" value="100" />
+          </label>
+          <label>
+            Snapshot codec
+            <select id="network-codec">
+              <option value="binary">Binary DataView (default)</option>
+              <option value="json">JSON comparison</option>
+            </select>
+          </label>
+          <button id="measure-codecs" type="button" class="secondary-button">
+            Compare JSON and binary snapshots
+          </button>
+        </div>
+        <p class="experiment-hint">
+          Delay/jitter/loss are applied to each incoming and outgoing packet in this browser only.
+          Codec changes take effect after reconnecting to a room.
+        </p>
+        <pre id="netcode-measurement" class="experiment-output" aria-live="polite">
+No codec measurement recorded yet.</pre>
       </section>
     </main>
     <script type="module" src="/src/main.js"></script>

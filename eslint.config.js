@@ -22,6 +22,8 @@ export default [
         DOMException: 'readonly',
         Event: 'readonly',
         EventTarget: 'readonly',
+        TextDecoder: 'readonly',
+        TextEncoder: 'readonly',
         fetch: 'readonly',
         globalThis: 'readonly',
         HTMLCanvasElement: 'readonly',

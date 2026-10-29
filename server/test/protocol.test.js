@@ -12,6 +12,66 @@ test('protocol validates versioned join and chat messages and normalizes safe te
     type: 'chat',
     text: 'hello',
   });
+
+  test('protocol validates sequenced movement commands and supports binary codec negotiation', () => {
+    assert.deepEqual(
+      parseClientMessage(
+        JSON.stringify({
+          version: 0,
+          type: 'join',
+          room: 'training-sector',
+          name: 'Ace',
+          codec: 'binary',
+        }),
+      ),
+      {
+        version: 0,
+        type: 'join',
+        room: 'training-sector',
+        name: 'Ace',
+        codec: 'binary',
+      },
+    );
+    assert.deepEqual(
+      parseClientMessage(
+        JSON.stringify({
+          version: 0,
+          type: 'input',
+          seq: 3,
+          tick: 5,
+          turn: -1,
+          thrust: true,
+          brake: false,
+          fire: false,
+        }),
+      ),
+      {
+        type: 'input',
+        seq: 3,
+        tick: 5,
+        turn: -1,
+        thrust: true,
+        brake: false,
+        fire: false,
+      },
+    );
+    assert.throws(
+      () =>
+        parseClientMessage(
+          JSON.stringify({
+            version: 0,
+            type: 'input',
+            seq: 3,
+            tick: 5,
+            turn: 1000,
+            thrust: true,
+            brake: false,
+            fire: false,
+          }),
+        ),
+      /turn/,
+    );
+  });
   assert.deepEqual(JSON.parse(serverMessage('roster', { players: [] })), {
     version: 0,
     type: 'roster',

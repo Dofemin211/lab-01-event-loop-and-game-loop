@@ -6,6 +6,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { decodeBinary, encodeBinary } from '@dogfight/shared/codec';
 import { createConfig } from '../src/config.js';
 import { createApplication } from '../src/index.js';
 
@@ -84,6 +85,27 @@ function nextMessage(socket, predicate = () => true, timeoutMs = 1500) {
     };
     socket.on('message', onMessage);
     socket.once('close', onClose);
+  });
+}
+
+function nextFrame(socket, predicate, timeoutMs = 1500) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for a WebSocket frame.'));
+    }, timeoutMs);
+    const onMessage = (data, isBinary) => {
+      const message = isBinary ? decodeBinary(data) : JSON.parse(data.toString());
+      if (predicate(message)) {
+        cleanup();
+        resolve(message);
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+    };
+    socket.on('message', onMessage);
   });
 }
 
@@ -190,6 +212,7 @@ test('two WebSocket clients join, receive rosters and chat, then disconnect clea
     first.close();
     second.close();
   });
+
   first.send(JSON.stringify({ version: 0, type: 'join', room: 'training', name: 'Ace' }));
   await nextMessage(first, (message) => message.type === 'joined');
 
@@ -237,6 +260,55 @@ test('two WebSocket clients join, receive rosters and chat, then disconnect clea
   assert.match(replayText, /"type":"join"/);
   assert.match(replayText, /"type":"chat"/);
   assert.match(replayText, /"type":"leave"/);
+});
+
+test('binary clients receive authoritative snapshots and can control only through sequenced input', async (t) => {
+  const { wsUrl, baseUrl } = await setup(t);
+  const socket = await openSocket(wsUrl);
+  const joinedPromise = nextFrame(socket, (message) => message.type === 'joined');
+  const firstSnapshotPromise = nextFrame(socket, (message) => message.type === 'snapshot');
+  socket.send(
+    JSON.stringify({
+      version: 0,
+      type: 'join',
+      room: 'training',
+      name: 'Binary pilot',
+      codec: 'binary',
+    }),
+  );
+  const joined = await joinedPromise;
+  assert.ok(Number.isInteger(joined.player.entityId));
+  const initialSnapshot = await firstSnapshotPromise;
+  const ownEntity = initialSnapshot.entities.find((entity) => entity.id === joined.player.entityId);
+  assert.equal(ownEntity.kind, 'ship');
+
+  const acknowledgedSnapshotPromise = nextFrame(
+    socket,
+    (message) =>
+      message.type === 'snapshot' &&
+      message.acks.some(({ entityId, seq }) => entityId === joined.player.entityId && seq >= 1),
+  );
+  socket.send(
+    Buffer.from(
+      encodeBinary({
+        type: 'input',
+        seq: 1,
+        tick: 1,
+        turn: 1,
+        thrust: true,
+        brake: false,
+        fire: false,
+      }),
+    ),
+  );
+  const acknowledged = await acknowledgedSnapshotPromise;
+  const movedEntity = acknowledged.entities.find((entity) => entity.id === joined.player.entityId);
+  assert.ok(Math.hypot(movedEntity.x - ownEntity.x, movedEntity.y - ownEntity.y) > 0);
+
+  const statsResponse = await rawGet(new URL(baseUrl).port, '/api/stats');
+  assert.equal(statsResponse.status, 200);
+  assert.equal(JSON.parse(statsResponse.body).tickRate, 30);
+  socket.close();
 });
 
 test('WebSocket join timeout, invalid JSON, oversized messages and token bucket close connections safely', async (t) => {

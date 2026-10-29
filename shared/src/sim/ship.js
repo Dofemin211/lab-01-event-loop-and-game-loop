@@ -18,14 +18,27 @@ export class Ship extends Entity {
   #hp;
   #maxHp;
 
-  constructor(x = 0, y = 0, { angle = -Math.PI / 2, hp = 3, invulnerableTime = 1.5 } = {}) {
-    super({ pos: new Vector2(x, y), angle, radius: 13, kind: 'ship' });
+  constructor(
+    x = 0,
+    y = 0,
+    {
+      id,
+      angle = -Math.PI / 2,
+      hp = 3,
+      invulnerableTime = 1.5,
+      playerId = null,
+      vel = new Vector2(),
+    } = {},
+  ) {
+    super({ id, pos: new Vector2(x, y), vel, angle, radius: 13, kind: 'ship' });
     this.#hp = hp;
     this.#maxHp = hp;
+    this.playerId = playerId;
     this.invulnerableTime = invulnerableTime;
     this.thrust = 0;
     this.effects = new Map();
     this.weapon = { cooldown: 0, baseInterval: 0.22 };
+    this.score = 0;
   }
 
   get hp() {
@@ -37,6 +50,7 @@ export class Ship extends Entity {
   }
 
   update(dt, input, world) {
+    const shipInput = input instanceof Map ? input.get(this.playerId) : input;
     this.weapon.cooldown = Math.max(0, this.weapon.cooldown - dt);
     this.invulnerableTime = Math.max(0, this.invulnerableTime - dt);
     for (const [effect, remaining] of this.effects) {
@@ -56,7 +70,7 @@ export class Ship extends Entity {
         vy: this.vel.y,
         angle: this.angle,
       },
-      input,
+      shipInput ?? { isDown: () => false },
       dt,
     );
     this.angle = state.angle;
@@ -66,7 +80,7 @@ export class Ship extends Entity {
     this.pos.y = ((state.y % world.height) + world.height) % world.height;
   }
 
-  fire(world) {
+  fire(world, commandSeq = 0) {
     if (!this.alive || this.weapon.cooldown > 0) {
       return null;
     }
@@ -79,6 +93,7 @@ export class Ship extends Entity {
       vel: this.vel.add(direction.scale(460)),
       angle: this.angle,
       ownerId: this.id,
+      commandSeq,
     });
     world.spawn(bullet);
     world.emit('fired', { ship: this, bullet });
@@ -104,6 +119,37 @@ export class Ship extends Entity {
 
   repair(amount = 1) {
     this.#hp = Math.min(this.#maxHp, this.#hp + amount);
+  }
+
+  toSnapshot() {
+    return {
+      ...super.toSnapshot(),
+      hp: this.#hp,
+      maxHp: this.#maxHp,
+      playerId: this.playerId,
+      invulnerableTime: this.invulnerableTime,
+      thrust: this.thrust,
+      effects: [...this.effects],
+      weapon: { ...this.weapon },
+      score: this.score,
+    };
+  }
+
+  static fromSnapshot(snapshot) {
+    const ship = new Ship(snapshot.pos.x, snapshot.pos.y, {
+      id: snapshot.id,
+      angle: snapshot.angle,
+      hp: snapshot.hp,
+      invulnerableTime: snapshot.invulnerableTime,
+      playerId: snapshot.playerId,
+      vel: snapshot.vel,
+    });
+    ship.thrust = snapshot.thrust;
+    ship.effects = new Map(snapshot.effects ?? []);
+    ship.weapon = { ...ship.weapon, ...snapshot.weapon };
+    ship.score = snapshot.score ?? 0;
+    ship.alive = snapshot.alive;
+    return ship;
   }
 }
 

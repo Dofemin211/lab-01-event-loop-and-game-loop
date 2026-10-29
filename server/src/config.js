@@ -38,7 +38,7 @@ export function createConfig(env = process.env, cwd = ROOT) {
       min: 1,
       max: 64,
     }),
-    messageRatePerSecond: integerSetting(env, 'MESSAGE_RATE_PER_SECOND', 20, {
+    messageRatePerSecond: integerSetting(env, 'MESSAGE_RATE_PER_SECOND', 90, {
       min: 1,
       max: 1000,
     }),

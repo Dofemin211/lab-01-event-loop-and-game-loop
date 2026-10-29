@@ -1,0 +1,16 @@
+{
+  "name": "@dogfight/shared",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "exports": {
+    "./prng": "./src/prng.js",
+    "./protocol": "./src/protocol.js",
+    "./codec": "./src/codec.js",
+    "./sim": "./src/sim/index.js",
+    "./sim/*": "./src/sim/*.js"
+  }
+}

@@ -11,6 +11,7 @@
     "experiment:unsafe-backpressure": "node src/log/unsafe-backpressure-demo.js"
   },
   "dependencies": {
+    "@dogfight/shared": "*",
     "ws": "^8.18.0"
   }
 }

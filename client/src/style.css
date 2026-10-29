@@ -92,14 +92,54 @@ select {
 
 .flight-deck {
   position: relative;
-  height: min(69vh, 760px);
-  min-height: 380px;
-  margin-top: 20px;
+  width: min(100%, 1440px, calc(69vh * 8 / 5));
+  height: auto;
+  aspect-ratio: 8 / 5;
+  margin: 20px auto 0;
   overflow: hidden;
   border: 1px solid rgba(137, 199, 230, 0.2);
   border-radius: 12px;
   background: #081522;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
+}
+
+.netgraph {
+  position: absolute;
+  z-index: 1;
+  top: 108px;
+  left: 16px;
+  width: 220px;
+  padding: 10px 12px;
+  border: 1px solid rgba(137, 199, 230, 0.25);
+  border-radius: 7px;
+  color: #a7bdcb;
+  background: rgba(5, 16, 28, 0.86);
+  font:
+    10px/1.6 'DM Mono',
+    monospace;
+  pointer-events: none;
+}
+
+.netgraph p {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+}
+
+.netgraph strong {
+  color: #d9f3ff;
+  font-weight: 500;
+}
+
+.netgraph-title {
+  margin-bottom: 4px !important;
+  color: #91dfff;
+  font-weight: 700;
+}
+
+#netgraph-codec {
+  color: #a7bdcb;
 }
 
 .flight-deck > [hidden] {
@@ -302,6 +342,14 @@ select {
   border-radius: 8px;
   color: #d9f3ff;
   background: rgba(5, 16, 28, 0.9);
+}
+
+.netgraph {
+  top: 80px;
+  left: 10px;
+  width: 190px;
+  padding: 8px;
+  font-size: 9px;
 }
 
 .multiplayer-panel p,

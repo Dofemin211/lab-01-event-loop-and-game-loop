@@ -173,7 +173,7 @@ function drawPickup(context, entity, x, y, timestamp) {
 }
 
 function drawExplosion(context, entity) {
-  for (const particle of entity.particles) {
+  for (const particle of entity.particles ?? []) {
     context.globalAlpha = Math.max(0, particle.remaining / particle.lifetime);
     context.fillStyle = '#ffbd75';
     context.beginPath();
@@ -181,6 +181,20 @@ function drawExplosion(context, entity) {
     context.fill();
   }
   context.globalAlpha = 1;
+  if ((!entity.particles || entity.particles.length === 0) && entity.radius > 0) {
+    const alpha = Math.min(1, Math.max(0, entity.ttl / 0.95));
+    context.save();
+    context.globalAlpha = alpha;
+    context.translate(entity.pos.x, entity.pos.y);
+    context.strokeStyle = '#ffbd75';
+    context.lineWidth = 2;
+    context.shadowBlur = 12;
+    context.shadowColor = '#ff9e59';
+    context.beginPath();
+    context.arc(0, 0, entity.radius * (1 - alpha * 0.25), 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  }
 }
 
 function drawEntity(context, entity, x, y, angle, timestamp, spriteSheet) {

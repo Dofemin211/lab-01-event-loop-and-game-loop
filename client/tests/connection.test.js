@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MultiplayerConnection } from '../src/connection.js';
+import { decodeBinary, encodeBinary } from '@dogfight/shared/codec';
 
 class FakeWebSocket extends EventTarget {
   static instances = [];
@@ -22,12 +23,18 @@ class FakeWebSocket extends EventTarget {
     if (this.readyState !== 1) {
       throw new Error('Socket is not open.');
     }
-    this.sent.push(JSON.parse(value));
+    this.sent.push(typeof value === 'string' ? JSON.parse(value) : value);
   }
 
   receive(message) {
     const event = new Event('message');
     event.data = JSON.stringify(message);
+    this.dispatchEvent(event);
+  }
+
+  receiveBinary(message) {
+    const event = new Event('message');
+    event.data = encodeBinary(message);
     this.dispatchEvent(event);
   }
 
@@ -71,7 +78,10 @@ test('connection sends a queued join then queued chat after the socket opens and
   assert.equal(connection.sendChat('Ready'), true);
   const socket = FakeWebSocket.instances[0];
   socket.open();
-  assert.deepEqual(socket.sent, [{ version: 0, type: 'join', room: 'training', name: 'Ace' }]);
+  assert.deepEqual(socket.sent, [
+    { version: 0, type: 'join', room: 'training', name: 'Ace', codec: 'binary' },
+  ]);
+  assert.equal(socket.binaryType, 'arraybuffer');
   socket.receive({ version: 0, type: 'joined', room: { id: 'training' } });
   assert.deepEqual(socket.sent[1], { version: 0, type: 'chat', text: 'Ready' });
   assert.equal(connection.state, 'joined');
@@ -97,10 +107,43 @@ test('connection reconnects with capped exponential jitter and re-sends join', (
     type: 'join',
     room: 'training',
     name: 'Nova',
+    codec: 'binary',
   });
   connection.disconnect();
   second.drop();
   assert.equal(timers.length, 1);
+});
+
+test('connection sends sequenced binary inputs and measures binary ping round trips', () => {
+  const { connection } = createConnection();
+  connection.connect('training', 'Ace');
+  const socket = FakeWebSocket.instances[0];
+  socket.open();
+  socket.receive({ version: 0, type: 'joined', room: { id: 'training' } });
+  assert.equal(
+    connection.sendInput({
+      seq: 1,
+      tick: 1,
+      turn: -1,
+      thrust: true,
+      brake: false,
+      fire: true,
+    }),
+    true,
+  );
+  assert.deepEqual(decodeBinary(socket.sent[1]), {
+    type: 'input',
+    seq: 1,
+    tick: 1,
+    turn: -1,
+    thrust: true,
+    brake: false,
+    fire: true,
+  });
+  const sentAt = performance.now() - 10;
+  socket.receiveBinary({ type: 'pong', tick: 1, sentAt });
+  assert.ok(connection.rttMs >= 10);
+  connection.disconnect();
 });
 
 test('intentional disconnect cancels reconnect and server rejection stops reconnecting', () => {

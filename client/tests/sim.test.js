@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { wrapShip } from '../src/sim/arena.js';
-import { createShip, integrate, interpolateShip, SHIP_TUNING } from '../src/sim/ship.js';
+import { wrapShip } from '@dogfight/shared/sim/arena';
+import { createShip, integrate, interpolateShip, SHIP_TUNING } from '@dogfight/shared/sim/ship';
 
 function controls(...codes) {
   const down = new Set(codes);

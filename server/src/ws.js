@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 import { parseClientMessage, ProtocolError, serverMessage } from './protocol.js';
+import { encodeBinary } from '@dogfight/shared/codec';
 
 function logError(logger, message, error) {
   logger.error(message, error?.message ?? error);
@@ -53,16 +54,32 @@ function attachRoomBroadcasts(room, wss, states, logger) {
   const onChat = (message) =>
     broadcastRoom(wss, states, room, { type: 'chat', message }, { critical: false });
   const onError = (error) => logError(logger, `Room ${room.id} failed:`, error);
+  const onSnapshot = (snapshot) => {
+    const jsonSnapshot = serverMessage('snapshot', snapshot);
+    let binarySnapshot;
+    for (const socket of wss.clients) {
+      const state = states.get(socket);
+      if (state?.room !== room) continue;
+      if (state.codec === 'binary') {
+        binarySnapshot ??= Buffer.from(encodeBinary(snapshot));
+        send(socket, state, binarySnapshot, { critical: false });
+      } else {
+        send(socket, state, jsonSnapshot, { critical: false });
+      }
+    }
+  };
 
   room.on('join', onJoin);
   room.on('leave', onLeave);
   room.on('chat', onChat);
   room.on('error', onError);
+  room.on('snapshot', onSnapshot);
   room.once('empty', () => {
     room.off('join', onJoin);
     room.off('leave', onLeave);
     room.off('chat', onChat);
     room.off('error', onError);
+    room.off('snapshot', onSnapshot);
   });
 }
 
@@ -82,6 +99,7 @@ export function installWebSocketHandlers(wss, roomManager, config, logger = cons
       logger,
       room: null,
       player: null,
+      codec: 'json',
       alive: true,
       missedHeartbeats: 0,
       droppedMessages: 0,
@@ -145,6 +163,7 @@ export function installWebSocketHandlers(wss, roomManager, config, logger = cons
         try {
           state.room = room;
           state.player = room.join(player);
+          state.codec = message.codec ?? 'json';
           clearTimeout(state.joinTimer);
           send(
             socket,
@@ -167,6 +186,23 @@ export function installWebSocketHandlers(wss, roomManager, config, logger = cons
           serverMessage('error', { message: 'Join a room before sending chat.' }),
         );
         socket.close(1008, 'Join required.');
+        return;
+      }
+      if (message.type === 'input') {
+        try {
+          state.room.match.enqueueInput(state.player.id, message);
+        } catch (error) {
+          send(socket, state, serverMessage('error', { message: error.message }));
+        }
+        return;
+      }
+      if (message.type === 'ping') {
+        const pong = { type: 'pong', tick: state.room.match?.tick ?? 0, sentAt: message.sentAt };
+        const encoded =
+          state.codec === 'binary'
+            ? Buffer.from(encodeBinary(pong))
+            : serverMessage('pong', { tick: pong.tick, sentAt: pong.sentAt });
+        send(socket, state, encoded, { critical: false });
         return;
       }
       try {

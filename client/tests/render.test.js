@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { drawLoadingScreen, drawShip, drawWorldScene } from '../src/render/draw.js';
-import { Ship } from '../src/sim/ship.js';
-import { World } from '../src/sim/world.js';
+import { Ship } from '@dogfight/shared/sim/ship';
+import { World } from '@dogfight/shared/sim/world';
 
 function createRecordingContext() {
   const labels = [];

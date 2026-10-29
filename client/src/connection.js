@@ -1,3 +1,5 @@
+import { decodeBinary, decodeJson, encodeBinary, encodeJson } from '@dogfight/shared/codec';
+
 const PROTOCOL_VERSION = 0;
 
 function emit(target, type, detail = {}) {
@@ -14,6 +16,7 @@ export class MultiplayerConnection extends EventTarget {
     baseDelayMs = 250,
     maxDelayMs = 8000,
     maxQueue = 50,
+    networkEmulator = null,
   } = {}) {
     super();
     this.url = url;
@@ -24,6 +27,9 @@ export class MultiplayerConnection extends EventTarget {
     this.baseDelayMs = baseDelayMs;
     this.maxDelayMs = maxDelayMs;
     this.maxQueue = maxQueue;
+    this.networkEmulator = networkEmulator;
+    this.trafficSamples = [];
+    this.rttMs = null;
     this.state = 'disconnected';
     this.socket = null;
     this.room = null;
@@ -35,13 +41,23 @@ export class MultiplayerConnection extends EventTarget {
     this.joined = false;
   }
 
-  connect(room, name) {
+  connect(room, name, { codec = 'binary' } = {}) {
     if (typeof room !== 'string' || typeof name !== 'string' || !name.trim()) {
       throw new TypeError('A room and player name are required to connect.');
     }
+    if (!['binary', 'json'].includes(codec)) {
+      throw new TypeError('Connection codec must be binary or json.');
+    }
     this.disconnect();
     this.room = room;
-    this.joinMessage = { version: PROTOCOL_VERSION, type: 'join', room, name: name.trim() };
+    this.codec = codec;
+    this.joinMessage = {
+      version: PROTOCOL_VERSION,
+      type: 'join',
+      room,
+      name: name.trim(),
+      codec,
+    };
     this.wanted = true;
     this.#open();
   }
@@ -64,6 +80,38 @@ export class MultiplayerConnection extends EventTarget {
     }
     this.queue.push(message);
     return true;
+  }
+
+  sendInput(command) {
+    if (!this.joined || !this.socket || this.socket.readyState !== 1) return false;
+    if (this.codec === 'binary') {
+      return this.#send(encodeBinary({ type: 'input', ...command }), true);
+    }
+    return this.#send({ version: PROTOCOL_VERSION, type: 'input', ...command });
+  }
+
+  sendPing() {
+    if (!this.joined || !this.socket || this.socket.readyState !== 1) return false;
+    const sentAt = performance.now();
+    const message =
+      this.codec === 'binary'
+        ? encodeBinary({ type: 'ping', sentAt })
+        : { version: PROTOCOL_VERSION, type: 'ping', sentAt };
+    return this.#send(message, this.codec === 'binary');
+  }
+
+  setNetworkEmulator(emulator) {
+    this.networkEmulator = emulator;
+  }
+
+  traffic(now = performance.now()) {
+    this.trafficSamples = this.trafficSamples.filter((sample) => now - sample.at <= 1000);
+    const bytesIn = this.trafficSamples.reduce((sum, sample) => sum + sample.inbound, 0);
+    const bytesOut = this.trafficSamples.reduce((sum, sample) => sum + sample.outbound, 0);
+    return {
+      inboundKilobytesPerSecond: bytesIn / 1024,
+      outboundKilobytesPerSecond: bytesOut / 1024,
+    };
   }
 
   disconnect() {
@@ -96,6 +144,7 @@ export class MultiplayerConnection extends EventTarget {
       return;
     }
     this.socket = socket;
+    socket.binaryType = 'arraybuffer';
     socket.addEventListener('open', () => {
       if (socket !== this.socket || !this.wanted) {
         socket.close(1000, 'Connection is no longer needed.');
@@ -109,7 +158,12 @@ export class MultiplayerConnection extends EventTarget {
       if (socket !== this.socket) {
         return;
       }
-      this.#handleMessage(event.data);
+      this.#recordTraffic('inbound', byteLength(event.data));
+      const handle = () => {
+        if (socket === this.socket) this.#handleMessage(event.data);
+      };
+      if (this.networkEmulator) this.networkEmulator.transmit(handle, 'inbound');
+      else handle();
     });
     socket.addEventListener('error', () => {
       if (socket === this.socket) {
@@ -133,8 +187,9 @@ export class MultiplayerConnection extends EventTarget {
 
   #handleMessage(raw) {
     let message;
+    const binary = typeof raw !== 'string';
     try {
-      message = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+      message = binary ? decodeBinary(raw) : decodeJson(raw);
     } catch {
       emit(this, 'error', { message: 'The server sent an unreadable message.' });
       return;
@@ -142,7 +197,7 @@ export class MultiplayerConnection extends EventTarget {
     if (
       !message ||
       typeof message !== 'object' ||
-      message.version !== PROTOCOL_VERSION ||
+      (!binary && message.version !== PROTOCOL_VERSION) ||
       typeof message.type !== 'string'
     ) {
       emit(this, 'error', { message: 'The server sent a message with an unsupported format.' });
@@ -154,6 +209,9 @@ export class MultiplayerConnection extends EventTarget {
       for (const queued of this.queue.splice(0)) {
         this.#send(queued);
       }
+    }
+    if (message.type === 'pong') {
+      this.rttMs = Math.max(0, performance.now() - message.sentAt);
     }
     if (message.type === 'error') {
       if (!this.joined) {
@@ -168,17 +226,47 @@ export class MultiplayerConnection extends EventTarget {
     emit(this, message.type, message);
   }
 
-  #send(message) {
+  #send(message, binary = false) {
     if (!this.socket || this.socket.readyState !== 1) {
       return false;
     }
+    const socket = this.socket;
+    const payload = binary ? message : encodeJson(message);
+    this.#recordTraffic('outbound', byteLength(payload));
+    const deliver = () => {
+      if (socket !== this.socket || socket.readyState !== 1) return;
+      try {
+        socket.send(payload);
+      } catch (error) {
+        emit(this, 'error', { message: `Could not send the message: ${error.message}` });
+      }
+    };
+    if (this.networkEmulator) {
+      this.networkEmulator.transmit(deliver, 'outbound');
+      return true;
+    }
     try {
-      this.socket.send(JSON.stringify(message));
+      deliver();
       return true;
     } catch (error) {
       emit(this, 'error', { message: `Could not send the message: ${error.message}` });
       return false;
     }
+  }
+
+  #recordTraffic(direction, bytes) {
+    const at = performance.now();
+    const last = this.trafficSamples.at(-1);
+    if (last?.at === at) {
+      last[direction] += bytes;
+    } else {
+      this.trafficSamples.push({
+        at,
+        inbound: direction === 'inbound' ? bytes : 0,
+        outbound: direction === 'outbound' ? bytes : 0,
+      });
+    }
+    this.trafficSamples = this.trafficSamples.filter((sample) => at - sample.at <= 2000);
   }
 
   #scheduleReconnect() {
@@ -202,4 +290,11 @@ export class MultiplayerConnection extends EventTarget {
     this.state = state;
     emit(this, 'state', { state });
   }
+}
+
+function byteLength(data) {
+  if (typeof data === 'string') return new TextEncoder().encode(data).byteLength;
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  if (ArrayBuffer.isView(data)) return data.byteLength;
+  return 0;
 }

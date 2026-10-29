@@ -192,7 +192,7 @@ async function handleDevelopmentRoute(request, response, url, config) {
   return false;
 }
 
-export function createHttpServer({ config, roomManager, logger = console }) {
+export function createHttpServer({ config, roomManager, matchManager, logger = console }) {
   const handler = async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -218,6 +218,14 @@ export function createHttpServer({ config, roomManager, logger = console }) {
           throw new HttpError(405, 'Method not allowed.');
         }
         sendJson(response, 200, { status: 'ok' });
+        return;
+      }
+      if (url.pathname === '/api/stats') {
+        if (request.method !== 'GET') {
+          response.setHeader('Allow', 'GET');
+          throw new HttpError(405, 'Method not allowed.');
+        }
+        sendJson(response, 200, matchManager.stats());
         return;
       }
       if (url.pathname === '/api/rooms') {

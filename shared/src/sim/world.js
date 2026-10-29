@@ -1,15 +1,20 @@
 import { Asteroid } from './asteroid.js';
+import { Bullet } from './bullet.js';
 import { collisionPairs, resolveCollisions } from './collision.js';
 import { Explosion } from './explosion.js';
 import { Pickup } from './pickup.js';
+import { Ship } from './ship.js';
 import { Vector2 } from './vector.js';
+import { mulberry32 } from '../prng.js';
 
 const NO_INPUT = Object.freeze({ isDown: () => false });
 
 export class World {
   #entities = new Map();
   #pendingRemoval = new Set();
-  #randomState;
+  #random;
+  #seed;
+  #nextEntityId = 1;
   #collisionSystem;
 
   constructor({
@@ -24,7 +29,8 @@ export class World {
     }
     this.width = width;
     this.height = height;
-    this.#randomState = seed >>> 0;
+    this.#seed = seed >>> 0;
+    this.#random = mulberry32(seed);
     this.#collisionSystem = collisionSystem;
     this.emit = emit;
   }
@@ -34,12 +40,17 @@ export class World {
   }
 
   spawn(entity) {
-    if (!entity || !Number.isInteger(entity.id)) {
+    if (!entity || typeof entity.assignId !== 'function') {
       throw new TypeError('World.spawn expects an Entity with an integer id.');
+    }
+    if (!entity.idWasRestored) {
+      entity.assignId(this.#nextEntityId);
     }
     if (this.#entities.has(entity.id)) {
       throw new Error(`Entity ${entity.id} is already in this world.`);
     }
+    this.#nextEntityId = Math.max(this.#nextEntityId, entity.id + 1);
+    entity.idWasRestored = false;
     entity.alive = true;
     this.#entities.set(entity.id, entity);
     return entity;
@@ -72,8 +83,7 @@ export class World {
   }
 
   random() {
-    this.#randomState = (1664525 * this.#randomState + 1013904223) >>> 0;
-    return this.#randomState / 4294967296;
+    return this.#random();
   }
 
   createExplosion(x, y) {
@@ -156,5 +166,52 @@ export class World {
 
   addAsteroid(x, y, options = {}) {
     return this.spawn(new Asteroid(x, y, options));
+  }
+
+  toSnapshot() {
+    return {
+      width: this.width,
+      height: this.height,
+      seed: this.#seed,
+      randomState: this.#random.getState(),
+      nextEntityId: this.#nextEntityId,
+      entities: [...this.#entities.values()].map((entity) => entity.toSnapshot()),
+    };
+  }
+
+  static fromSnapshot(snapshot, options = {}) {
+    if (
+      !snapshot ||
+      !Number.isInteger(snapshot.width) ||
+      !Number.isInteger(snapshot.height) ||
+      !Number.isInteger(snapshot.seed) ||
+      !Number.isInteger(snapshot.randomState) ||
+      !Array.isArray(snapshot.entities)
+    ) {
+      throw new TypeError('World snapshot is invalid.');
+    }
+    const world = new World({
+      width: snapshot.width,
+      height: snapshot.height,
+      seed: snapshot.seed,
+      ...options,
+    });
+    world.#random.setState(snapshot.randomState);
+    for (const data of snapshot.entities) {
+      const constructors = {
+        ship: Ship,
+        asteroid: Asteroid,
+        bullet: Bullet,
+        pickup: Pickup,
+        explosion: Explosion,
+      };
+      const Constructor = constructors[data.kind];
+      if (!Constructor || typeof Constructor.fromSnapshot !== 'function') {
+        throw new TypeError(`World snapshot contains unsupported entity "${data.kind}".`);
+      }
+      world.spawn(Constructor.fromSnapshot(data));
+    }
+    world.#nextEntityId = Math.max(world.#nextEntityId, snapshot.nextEntityId ?? 1);
+    return world;
   }
 }

@@ -1,5 +1,8 @@
+import { decodeBinary } from '@dogfight/shared/codec';
+import { validateInputCommand } from '@dogfight/shared/protocol';
+
 export const PROTOCOL_VERSION = 0;
-export const CLIENT_MESSAGE_TYPES = Object.freeze(['join', 'chat']);
+export const CLIENT_MESSAGE_TYPES = Object.freeze(['join', 'chat', 'input', 'ping']);
 
 const ROOM_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const CONTROL_CHARACTERS = (value) =>
@@ -18,7 +21,19 @@ export class ProtocolError extends Error {
 
 export function parseClientMessage(data, isBinary = false) {
   if (isBinary) {
-    throw new ProtocolError('Only JSON text messages are supported.', 1003);
+    try {
+      if (data[0] !== 1) {
+        throw new ProtocolError('Only supported binary protocol messages are accepted.', 1003);
+      }
+      const message = decodeBinary(data);
+      if (message.type !== 'input' && message.type !== 'ping') {
+        throw new ProtocolError('Binary message type is not accepted from clients.', 1003);
+      }
+      return message;
+    } catch (error) {
+      if (error instanceof ProtocolError) throw error;
+      throw new ProtocolError(error.message || 'Binary message is invalid.', 1002);
+    }
   }
 
   let message;
@@ -43,7 +58,11 @@ export function parseClientMessage(data, isBinary = false) {
   }
 
   if (message.type === 'join') {
-    if (Object.keys(message).some((key) => !['version', 'type', 'room', 'name'].includes(key))) {
+    if (
+      Object.keys(message).some(
+        (key) => !['version', 'type', 'room', 'name', 'codec'].includes(key),
+      )
+    ) {
       throw new ProtocolError('Join message contains unsupported fields.');
     }
     if (
@@ -57,7 +76,44 @@ export function parseClientMessage(data, isBinary = false) {
     if (name.length < 1 || name.length > 24 || CONTROL_CHARACTERS(name)) {
       throw new ProtocolError('Player name must contain 1–24 printable characters.');
     }
-    return { version: PROTOCOL_VERSION, type: 'join', room: message.room, name };
+    if (message.codec !== undefined && !['binary', 'json'].includes(message.codec)) {
+      throw new ProtocolError('Join codec must be binary or json.');
+    }
+    return {
+      version: PROTOCOL_VERSION,
+      type: 'join',
+      room: message.room,
+      name,
+      ...(message.codec ? { codec: message.codec } : {}),
+    };
+  }
+
+  if (message.type === 'input') {
+    try {
+      return {
+        type: 'input',
+        ...validateInputCommand({
+          seq: message.seq,
+          tick: message.tick,
+          turn: message.turn,
+          thrust: message.thrust,
+          brake: message.brake,
+          fire: message.fire,
+        }),
+      };
+    } catch (error) {
+      throw new ProtocolError(error.message);
+    }
+  }
+
+  if (message.type === 'ping') {
+    if (
+      Object.keys(message).some((key) => !['version', 'type', 'sentAt'].includes(key)) ||
+      !Number.isFinite(message.sentAt)
+    ) {
+      throw new ProtocolError('Ping message timestamp is invalid.');
+    }
+    return { type: 'ping', sentAt: message.sentAt };
   }
 
   if (
