@@ -1,6 +1,6 @@
-# Dogfight — Lab 01: The Event Loop Is the Game Loop
+# Dogfight — JavaScript Game Labs 01–02
 
-A small, playable space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. The simulation runs in fixed 1/60-second steps; the browser renders whenever it is ready.
+A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 expands the same game with entity classes, shooting, collisions, pickups, and respawning.
 
 ## Run it
 
@@ -35,9 +35,10 @@ npm run build
 | `A` or `←` | Turn left                                    |
 | `D` or `→` | Turn right                                   |
 | `Space`    | Brake                                        |
+| `F`        | Fire while held                              |
 | `R`        | Reset the ship                               |
 
-The arena wraps at all four edges. The ship has acceleration, drag, a speed limit, and a small animated flame. A deterministic starfield makes movement visible. The on-canvas HUD shows simulation steps per second, rendered frames per second, and the most recent JavaScript frame-processing time.
+The ship has acceleration, drag, a speed limit, a hull meter, and a small animated flame. It wraps at the arena edges; asteroids drift and bounce. Destroy asteroids, collect shield/rapid-fire pickups, and respawn after being destroyed. A deterministic starfield makes movement visible. The on-canvas HUD shows score, hull, simulation steps per second, rendered frames per second, and the most recent JavaScript frame-processing time.
 
 ## Project map and architecture
 
@@ -53,18 +54,30 @@ src/
   loop.js             # Fixed-step accumulator, optional comparison modes, timing metrics
   input.js            # Closure-backed keyboard state and just-pressed edges
   sim/
-    ship.js           # Plain ship data, pure integration, interpolation
-    arena.js           # Pure wrap-around calculation
+    vector.js         # Immutable vector operations with explicit in-place variants
+    entity.js         # Shared identity and base entity behavior
+    ship.js           # Ship extends Entity; private health and firing
+    bullet.js         # Timed projectiles
+    asteroid.js       # Drifting, bouncing, damageable obstacles
+    pickup.js         # Stationary collidable effects
+    explosion.js      # Short-lived particles
+    homing.js         # Composable target-following behavior
+    collision.js      # Circle-pair detection and collision resolution
+    world.js          # Map store, iterable queries, deferred sweep
+    game.js           # Game session, score, setup, and timed respawn
+    arena.js          # Lab 01 pure wrap-around helper
   render/
     canvas.js         # Canvas 2D setup, resize observation, device-pixel ratio
-    draw.js           # Starfield, ship, and HUD drawing
+    draw.js           # Starfield, entities, effects, and HUD drawing
 tests/
+  entities.test.js
+  game.test.js
   input.test.js
   loop.test.js
   sim.test.js
 ```
 
-`src/sim/` does not import the DOM, canvas, or browser APIs. `integrate(ship, input, dt)` reads a ship and an input interface and returns a new ship; `wrapShip` also returns a new object. This makes the physics easier to test and repeat. `main.js` retains the last two simulation states. The renderer blends them with the loop's interpolation alpha, so drawing can run at a display's refresh rate without changing the physics step.
+`src/sim/` does not import the DOM, canvas, or browser APIs. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 
 `createInput(target)` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances.
 
@@ -200,8 +213,139 @@ The normal-speed positions above came from separate, reset trials with an automa
 - [x] Setup, architecture, event-loop theory, five console experiments, project-experiment procedures/results tables, eight reflection answers, and evidence-collection instructions.
 - [x] Record real foreground measurements for the busy-wait, both scheduler modes, and normal-speed fixed/variable trials.
 - [ ] Collect local screenshots, background-tab measurements, and fixed/variable trials under 6× CPU throttling.
-- [ ] Create the `lab-01` Git tag after all checks pass.
+- [x] Preserve the existing `lab-01` Git tag at the completed Lab 01 commit.
 
 ### Stretch work
 
 The optional gamepad, touch, frame-time histogram, and Web Worker exercises are not required for the lab's definition of done and are not included in this implementation.
+
+---
+
+## Lab 02 — Objects, Prototypes, and `this`: The Entity Model
+
+Lab 02 extends this same game and repository. It does not replace the Lab 01 loop: the browser still uses the original `createLoop`, fixed 1/60-second accumulator, interpolation alpha, Canvas setup, keyboard closure, frame metrics, and developer experiment controls. The visible game now contains an entity world and a shootable ship.
+
+### Play the expanded game
+
+Use the Lab 01 controls plus `F` (hold to fire). Bullets travel from the ship's nose and inherit its velocity. Asteroids drift and bounce inside the arena; one has a low-speed homing component. Destroyed asteroids award 100 points and may drop a pickup. Shield and rapid-fire pickups are stationary, collidable objects. The ship has three private hull points; collision damage destroys it, creates particles, and respawns it at a seeded random safe location after two simulation seconds. The score and hull are shown alongside the unchanged Lab 01 performance HUD.
+
+### Entity model and update lifecycle
+
+`Vector2` provides immutable `add`, `sub`, `scale`, `normalize`, `rotate`, `dot`, `length`, and `fromAngle` operations. Explicit `addInPlace`/`subInPlace`/`scaleInPlace` methods are available where mutation is intended. `Entity` owns a private static ID counter, an inaccessible per-instance ID, position, velocity, angle, radius, alive flag, kind, and shared update behavior. `Ship`, `Bullet`, `Asteroid`, `Pickup`, and `Explosion` each extend `Entity` by one level; there is no deeper inheritance chain.
+
+Objects remain dynamic property bags, and class methods are ordinary prototype lookups rather than per-instance copies. Object assignment copies a reference, `===` checks identity, and object spread makes only a shallow copy; nested component objects remain shared unless deliberately copied. The game mutates its entity objects during fixed-step updates, while `main.js` saves the small previous-position snapshot required for rendering interpolation.
+
+`World` owns `Map<number, Entity>`, exposes insertion-order iteration and a lazy `ofKind(kind)` generator, and marks entities dead before sweeping them at the end of `step`. Each step updates a snapshot of entities so objects spawned mid-step start updating on the next step. The default circle-pair generator and resolver live separately in `collision.js`; a different collision-pair function can be passed to `World` without changing the manager. This deliberately keeps the current O(n²) collision scan swappable for a later spatial hash.
+
+`GameSession` owns game-level score and the two-second respawn countdown. Simulation remains independent of DOM and canvas. The renderer interpolates the saved pre-step position/angle to the current entity state using the existing loop alpha; the ship's wrap-around interpolation takes the short route across arena edges. Lab 01's pure `integrate`/`createShip` helper API remains available for earlier examples and automated regression tests. The live class-based ship calls the same integration calculation, avoiding two different flight-physics implementations.
+
+### `this` bug, demonstration, and repair
+
+A class method is not automatically bound to its instance. Passing `ship.fire` directly as a callback detaches it; when called without its receiver, strict class code sees `this === undefined` and cannot read the ship's weapon state. The entity test deliberately performs this detached call and verifies that it throws. The real shooting path safely invokes `this.player.fire(this.world)` from `GameSession`, preserving the receiver.
+
+For an event listener you could use `button.addEventListener('click', () => ship.fire(world))`: the arrow closes over `ship` and `world`, but creates a callback for that registration. Or use `ship.fire.bind(ship, world)`: it makes a bound function that retains the receiver and arguments. A class-field arrow (`fire = () => ...`) is convenient for callbacks but allocates one function per instance rather than sharing a prototype method. Here the shared class method plus explicit method call keeps that memory cost out of every entity.
+
+### Composition instead of another inheritance branch
+
+The reusable homing behavior in `homing.js` is a small component object with an `update(entity, world, dt)` function. Both `Bullet` and `Asteroid` can hold that same component and choose a target kind; neither must inherit a special `HomingBullet` or `HomingAsteroid` branch. `Ship` also has a `Map` of timed pickup effects and a weapon component field. `Pickup` stays a plain stationary collidable entity that applies an effect to a ship; it is not a ship subclass. If behavior were encoded only through inheritance, homing bullets and asteroids would require duplicated branches or a hierarchy such as `Entity → Moving → Homing → Bullet/Asteroid`, while a pickup would be forced into an irrelevant ship/weapon ancestry. The composed behavior is independently attachable and testable, and its data stays local to each entity.
+
+### Lab 02: prove it to yourself
+
+Open the browser DevTools Console and predict the outputs first. These three exercises are the required console experiments in the Lab 02 assignment; their related language behavior is also covered by automated unit tests.
+
+1. **Delegation, not copying:**
+   ```js
+   const a = { hello: 'first' };
+   const b = Object.create(a);
+   b.hello; // "first", found on a through the prototype chain
+   a.hello = 'changed';
+   b.hello; // "changed"; b did not get a copied hello property
+   Object.hasOwn(b, 'hello'); // false
+   ```
+2. **Call-site `this`:**
+   ```js
+   class A {
+     m() {
+       return this;
+     }
+   }
+   const a = new A();
+   const m = a.m;
+   m(); // undefined in a module/class method (or a TypeError if the method reads this)
+   m.call(a) === a; // true: explicit binding
+   ```
+   Passing `ship.fire` to an event API has the same detached-receiver problem. Try it in a scratch snippet; the game calls the method through `this.player.fire(...)` rather than handing the unbound method to the event system.
+3. **Object keys versus `Map` keys:**
+   ```js
+   const o = { 1: 'x' };
+   const m = new Map([[1, 'x']]);
+   o[1]; // "x": object property keys are strings/symbols
+   m.get('1'); // undefined: Map distinguishes number 1 from string "1"
+   m.get(1); // "x"
+   ```
+
+Optional generator exercise: run `for (const bullet of world.ofKind('bullet')) { console.log(bullet.id); break; }` while paused at a breakpoint in `main.js`. Breaking early stops the generator; converting the entire world to `[...world]` just to find one item would create an unnecessary temporary array.
+
+### Lab 02 reflection answers
+
+1. **The four `this` rules, from highest to lowest precedence:** `new` binding, explicit `call`/`apply`/`bind`, implicit `obj.method()` receiver, and default binding (`undefined` in strict direct calls, otherwise `globalThis`). `setTimeout(ship.fire, 100)` detaches the method; any receiver supplied by the timer host is not `ship`, so the method cannot access that ship's weapon state. An arrow wrapper is concise but creates a callback closure; `bind` creates a bound function and can retain arguments; an arrow class field is easy to pass around but costs one function per instance.
+2. **Arrows and `this`:** an arrow has no local `this`; it closes over the surrounding lexical `this`, so `.bind`, `.call`, and `.apply` cannot replace it. Arrows are useful for short callbacks that should capture an enclosing instance. They are less suitable for a method shared by many instances if defining one arrow per instance is unnecessary.
+3. **Why `Map` for entities:** it accepts numeric IDs without string coercion, exposes `.size` and insertion-order iteration, and has no inherited property keys such as `"constructor"`. Its `delete` operation also makes explicit removal clear. The world still defers deletion until after its update/collision pass.
+4. **Why composition here:** homing is a capability shared by two different entity kinds. An inheritance-only design would duplicate homing logic or create a branching/deep `Moving → Homing → Bullet/Asteroid` hierarchy; the component is attached only where wanted. A pickup is collidable and stationary without pretending to be a ship or subclass.
+5. **Optional prototype chain:** `s → Ship.prototype → Entity.prototype → Object.prototype → null`. Looking up `s.update` checks the instance, then `Ship.prototype`; if Ship does not define `update`, lookup continues to `Entity.prototype`. This implementation does define `Ship.update`, which overrides the inherited movement method.
+6. **Optional `new` sketch:** `function construct(Ctor, ...args) { const instance = Object.create(Ctor.prototype); const result = Ctor.apply(instance, args); return result && (typeof result === 'object' || typeof result === 'function') ? result : instance; }`. This only approximates constructor functions: class constructors cannot be called with `.apply`, and native `new` also handles built-ins and `new.target`.
+7. **Optional “class is sugar”:** classes use prototypes for shared methods, but add syntax and guarantees constructor functions do not automatically provide: class declarations are not callable without `new`, their bodies are strict, and prototype methods are non-enumerable. `extends` also establishes both instance-prototype and constructor inheritance links.
+8. **Optional iterables:** an iterable has a `Symbol.iterator` that produces values on demand. `World` can be used in `for…of` and `ofKind` is a generator; `[...world]` eagerly allocates an array containing every entity, which can create avoidable work and memory pressure in a frequent game-loop query.
+
+### Lab 02 verification and requirement audit
+
+Statuses below reflect the code and tests actually run in this repository. A manual browser/DevTools exercise remains “needs manual verification”; a passing code test is not presented as evidence that the manual exercise was performed.
+
+#### Lab 01 regression audit
+
+| Lab / requirement                                                              | Implementing file and function                                                            | Status                    | Actual verification result                                                                                                                                                              |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lab 01 M1: rAF, fixed accumulator, clamped delta, alpha, idempotent start/stop | `src/loop.js` — `createLoop`, `frame`, `start`, `stop`                                    | Done                      | `tests/loop.test.js`: fixed steps, alpha, duplicate start/stop, and 250 ms clamp pass.                                                                                                  |
+| Lab 01 metrics: steps/s, frames/s, latest frame duration; HUD                  | `src/loop.js` — `updateMetrics`; `src/render/draw.js` — `drawHud`                         | Done                      | `tests/render.test.js` checks 60 steps/s, 120 frames/s, 2.50 ms, plus Lab 02 score/hull labels.                                                                                         |
+| Lab 01 M2: closure input, held keys, just-pressed edges                        | `src/input.js` — `createInput`                                                            | Done                      | `tests/input.test.js`: held-state, edge consumption, and experiment-control focus pass.                                                                                                 |
+| Lab 01 flight physics, heading, thrust, drag, brake, speed clamp               | `src/sim/ship.js` — `integrate`, `Ship.update`; `src/sim/vector.js`                       | Done                      | `tests/sim.test.js`: pure compatibility integration, deterministic thrust, and speed clamp pass.                                                                                        |
+| Lab 01 arena wrap-around                                                       | `src/sim/arena.js` — `wrapShip`; `src/sim/ship.js` — `Ship.update`                        | Done                      | `tests/sim.test.js` checks wrap coordinates; game session uses ship wrap on its fixed-step update.                                                                                      |
+| Lab 01 M3: previous/current interpolation including angle and wrap seam        | `src/main.js` — `simulate`; `src/render/draw.js` — `drawWorldScene`, `interpolateWrapped` | Done                      | `tests/sim.test.js` checks angular and positional wrap interpolation.                                                                                                                   |
+| Lab 01 Canvas DPR setup and resize                                             | `src/render/canvas.js` — `createCanvas`, `resize`                                         | Done                      | Browser check measured CSS 811.2×378.4 at DPR 1.25 as a 1014×473 backing canvas; after changing viewport to 695.2×619.4 at DPR 1 and dispatching resize, backing canvas became 695×619. |
+| Lab 01 M3: starfield and animated thrust flame                                 | `src/render/draw.js` — `drawStarfield`, `drawShip`                                        | Done                      | Browser screenshot shows stars/ship; `tests/render.test.js` checks idle ship rendering and both added flame layers when thrusting.                                                      |
+| Lab 01 controls still work in the expanded game                                | `src/input.js`; `src/sim/ship.js` — `Ship.update`; `src/main.js`                          | Needs manual verification | Input/physics tests pass; perform actual key play in the local browser to verify feel.                                                                                                  |
+| Lab 01 experiment 1: optional 100 ms busy-wait and explanation                 | `src/main.js` — `render`; README Lab 01 Experiment 1                                      | Done                      | Existing browser measurements preserved: baseline 165.00 FPS/0.060 ms jitter; busy-wait 132.02 FPS/11.631 ms jitter/100.200 ms max frame time.                                          |
+| Lab 01 experiment 2: rAF versus interval measurement                           | `src/loop.js`; `src/main.js`; README Lab 01 Experiment 2                                  | Partially done            | Existing measured foreground values preserved (rAF 165.00 FPS/0.060 ms; interval 62.50 FPS/0.605 ms). Five-second background-tab comparison still needs manual run.                     |
+| Lab 01 experiment 3: fixed vs variable under 6× throttling                     | `src/loop.js`; `src/main.js`; README Lab 01 Experiment 3                                  | Partially done            | Existing unthrottled five-second positions preserved. Paired 6× DevTools runs remain manual; no results invented.                                                                       |
+| Lab 01 event-loop theory, five console exercises, all eight reflections        | README Lab 01 sections                                                                    | Done                      | Content retained through this README update; source assignment re-opened and checked. Browser-console exercises are instructions, not claimed manual runs.                              |
+| Lab 01 ESLint, Prettier, tests, production build, `lab-01` tag                 | `package.json`; configs; test files; Git history                                          | Done                      | Final checks listed in the completion report; tag `lab-01` remains on the original Lab 01 commit.                                                                                       |
+
+#### Lab 02 deliverable audit
+
+| Lab / requirement                                                                       | Implementing file and function                                                                          | Status                    | Actual verification result                                                                                                           |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Lab 02 M1: pure `Vector2` operations, `fromAngle`, explicit in-place variants           | `src/sim/vector.js` — `Vector2`                                                                         | Done                      | `tests/entities.test.js`: pure add, normalize, rotate, dot, fromAngle, and explicit in-place mutation pass.                          |
+| Lab 02 M1: private static entity ID, fields and shared update                           | `src/sim/entity.js` — `Entity`                                                                          | Done                      | `tests/entities.test.js`: unique IDs, private ID, and class relationship pass.                                                       |
+| Lab 02 M1: `Ship extends Entity`, one inheritance level                                 | `src/sim/ship.js` — `Ship`                                                                              | Done                      | `tests/entities.test.js` checks `instanceof` and methods on prototypes; other entity classes directly extend `Entity`.               |
+| Lab 02 M2: `Map` store, spawn/get/deferred despawn, iterator, generator, safe sweep     | `src/sim/world.js` — `World`                                                                            | Done                      | `tests/entities.test.js`: insertion order, `ofKind`, mark-dead then sweep, and snapshot-safe spawn pass.                             |
+| Lab 02 M2: bullet TTL, drifting/bouncing asteroids, ship nose fire + inherited velocity | `src/sim/bullet.js`; `src/sim/asteroid.js`; `src/sim/ship.js` — `Ship.fire`                             | Done                      | `tests/entities.test.js`: TTL removal, edge bounce, bullet origin/velocity, cooldown, and detached-`this` error pass.                |
+| Lab 02 M3: swappable circle collision system; bullet damage to ships and asteroids      | `src/sim/collision.js` — `collisionPairs`, `resolveCollisions`; `src/sim/world.js` — `step`             | Done                      | `tests/entities.test.js`: circle pairs, replaceable system, ship damage, asteroid kill, and cleanup pass.                            |
+| Lab 02 M3: private ship health, explosion particles, two-second safe respawn, score HUD | `src/sim/ship.js`; `src/sim/explosion.js`; `src/sim/game.js` — `GameSession.step`; `src/render/draw.js` | Done                      | `tests/game.test.js` checks score, pickup effect, respawn delay and protection; `tests/render.test.js` checks score/hull labels.     |
+| Lab 02 M4: homing attachable to bullet and asteroid; stationary collidable pickups      | `src/sim/homing.js`; `src/sim/bullet.js`; `src/sim/asteroid.js`; `src/sim/pickup.js`                    | Done                      | `tests/entities.test.js` checks steering for both entity types, pickup application, and circle collision behavior.                   |
+| Lab 02 M4: composition design note ≤1 page                                              | README Lab 02 “Composition instead of another inheritance branch”                                       | Done                      | Design trade-off and alternative hierarchy documented in a concise section.                                                          |
+| Lab 02 `this` bug deliberately shown, corrected, explained                              | `src/sim/ship.js` — `Ship.fire`; `tests/entities.test.js`; README Lab 02                                | Done                      | Automated detached method throws; bound and normal method calls are checked; actual shooting uses a receiver-preserving method call. |
+| Lab 02 console exercises and reflection                                                 | README Lab 02 sections                                                                                  | Needs manual verification | Three exact console exercises and reflection answers are documented; user-run console practice is not claimed.                       |
+| Lab 02 lint, format, all tests, production build, `lab-02` tag                          | Project config, tests, Git                                                                              | Done                      | Final run: ESLint and Prettier pass; all 30 tests pass; Vite production build succeeds. `lab-02` is created on this verified commit. |
+
+### Final project checks
+
+Run all labs together from the project directory:
+
+```powershell
+npm run lint
+npm run format:check
+npm test
+npm run build
+```
+
+The optional Lab 01 stretch (gamepad, touch, frame-time histogram, worker) and Lab 02 stretch (typed-array ECS and spatial hash benchmark) remain outside the required deliverables.

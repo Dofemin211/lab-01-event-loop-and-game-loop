@@ -5,6 +5,7 @@ const CONTROL_CODES = new Set([
   'ArrowDown',
   'KeyA',
   'KeyD',
+  'KeyF',
   'KeyR',
   'KeyW',
   'Space',

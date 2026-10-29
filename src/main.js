@@ -2,9 +2,8 @@ import './style.css';
 import { createInput } from './input.js';
 import { createLoop } from './loop.js';
 import { createCanvas } from './render/canvas.js';
-import { createStarfield, drawScene } from './render/draw.js';
-import { wrapShip } from './sim/arena.js';
-import { createShip, integrate, interpolateShip } from './sim/ship.js';
+import { createStarfield, drawWorldScene } from './render/draw.js';
+import { createGame } from './sim/game.js';
 
 const canvasElement = document.querySelector('#game');
 if (!(canvasElement instanceof HTMLCanvasElement)) {
@@ -13,9 +12,8 @@ if (!(canvasElement instanceof HTMLCanvasElement)) {
 
 const surface = createCanvas(canvasElement);
 const input = createInput(window);
-const initialPoint = () => ({ x: surface.width / 2, y: surface.height / 2 });
-let current = createShip(initialPoint().x, initialPoint().y);
-let previous = { ...current };
+let session = createGame({ width: surface.width, height: surface.height });
+let previousStates = new Map();
 let stars = createStarfield(surface.width, surface.height);
 let renderedFrames = 0;
 let busyWaitEnabled = false;
@@ -23,23 +21,41 @@ let measurement = null;
 let gameLoop;
 
 function resetShip() {
-  const point = initialPoint();
-  current = createShip(point.x, point.y);
-  previous = { ...current };
+  session = createGame({ width: surface.width, height: surface.height });
+  previousStates = new Map();
 }
 
 function simulate(dt) {
   if (input.justPressed('KeyR')) {
     resetShip();
   }
-  previous = { ...current };
-  current = wrapShip(integrate(current, input, dt), surface.width, surface.height);
+  previousStates = new Map(
+    [...session.world].map((entity) => [
+      entity.id,
+      { x: entity.pos.x, y: entity.pos.y, angle: entity.angle },
+    ]),
+  );
+  session.step(dt, input);
   input.endFrame();
 }
 
 function render(alpha, stats) {
-  const ship = interpolateShip(previous, current, alpha, surface.width, surface.height);
-  drawScene(surface.context, surface.width, surface.height, stars, ship, stats);
+  drawWorldScene(
+    surface.context,
+    surface.width,
+    surface.height,
+    stars,
+    session.world,
+    stats,
+    {
+      score: session.score,
+      player: session.player,
+      respawnRemaining: session.respawnRemaining,
+    },
+    previousStates,
+    alpha,
+    performance.now(),
+  );
   renderedFrames += 1;
 
   if (measurement && stats.frameIntervalMs > 0) {
@@ -96,13 +112,16 @@ if (new URLSearchParams(window.location.search).get('experiments') === '1') {
   experimentControls.reset.addEventListener('click', resetShip);
   experimentControls.capturePosition.addEventListener('click', () => {
     const settings = readExperimentSettings();
+    const player = session.player;
     experimentControls.positionOutput.textContent = JSON.stringify(
       {
         timestep: settings.variableTimestep ? 'variable' : 'fixed',
-        x: Number(current.x.toFixed(2)),
-        y: Number(current.y.toFixed(2)),
-        vx: Number(current.vx.toFixed(2)),
-        vy: Number(current.vy.toFixed(2)),
+        score: session.score,
+        hp: player?.hp ?? 0,
+        x: Number((player?.pos.x ?? 0).toFixed(2)),
+        y: Number((player?.pos.y ?? 0).toFixed(2)),
+        vx: Number((player?.vel.x ?? 0).toFixed(2)),
+        vy: Number((player?.vel.y ?? 0).toFixed(2)),
       },
       null,
       2,
@@ -168,6 +187,6 @@ if (new URLSearchParams(window.location.search).get('experiments') === '1') {
 
 window.addEventListener('resize', () => {
   stars = createStarfield(surface.width, surface.height);
-  current = wrapShip(current, surface.width, surface.height);
-  previous = { ...current };
+  session.resize(surface.width, surface.height);
+  previousStates = new Map();
 });

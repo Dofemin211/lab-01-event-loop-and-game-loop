@@ -1,3 +1,7 @@
+import { Entity } from './entity.js';
+import { Bullet } from './bullet.js';
+import { Vector2 } from './vector.js';
+
 export const SHIP_TUNING = Object.freeze({
   rotationSpeed: 4.2,
   thrustAcceleration: 280,
@@ -10,7 +14,99 @@ export function createShip(x = 0, y = 0) {
   return { x, y, vx: 0, vy: 0, angle: -Math.PI / 2, thrust: 0 };
 }
 
-export function integrate(ship, input, dt) {
+export class Ship extends Entity {
+  #hp;
+  #maxHp;
+
+  constructor(x = 0, y = 0, { angle = -Math.PI / 2, hp = 3, invulnerableTime = 1.5 } = {}) {
+    super({ pos: new Vector2(x, y), angle, radius: 13, kind: 'ship' });
+    this.#hp = hp;
+    this.#maxHp = hp;
+    this.invulnerableTime = invulnerableTime;
+    this.thrust = 0;
+    this.effects = new Map();
+    this.weapon = { cooldown: 0, baseInterval: 0.22 };
+  }
+
+  get hp() {
+    return this.#hp;
+  }
+
+  get maxHp() {
+    return this.#maxHp;
+  }
+
+  update(dt, input, world) {
+    this.weapon.cooldown = Math.max(0, this.weapon.cooldown - dt);
+    this.invulnerableTime = Math.max(0, this.invulnerableTime - dt);
+    for (const [effect, remaining] of this.effects) {
+      const nextRemaining = remaining - dt;
+      if (nextRemaining <= 0) {
+        this.effects.delete(effect);
+      } else {
+        this.effects.set(effect, nextRemaining);
+      }
+    }
+
+    const state = integrateState(
+      {
+        x: this.pos.x,
+        y: this.pos.y,
+        vx: this.vel.x,
+        vy: this.vel.y,
+        angle: this.angle,
+      },
+      input,
+      dt,
+    );
+    this.angle = state.angle;
+    this.thrust = state.thrust;
+    this.vel = new Vector2(state.vx, state.vy);
+    this.pos.x = ((state.x % world.width) + world.width) % world.width;
+    this.pos.y = ((state.y % world.height) + world.height) % world.height;
+  }
+
+  fire(world) {
+    if (!this.alive || this.weapon.cooldown > 0) {
+      return null;
+    }
+
+    const direction = Vector2.fromAngle(this.angle);
+    const rapidFire = this.effects.has('rapid-fire');
+    this.weapon.cooldown = this.weapon.baseInterval * (rapidFire ? 0.42 : 1);
+    const bullet = new Bullet({
+      pos: this.pos.add(direction.scale(this.radius + 5)),
+      vel: this.vel.add(direction.scale(460)),
+      angle: this.angle,
+      ownerId: this.id,
+    });
+    world.spawn(bullet);
+    return bullet;
+  }
+
+  takeDamage(amount = 1) {
+    if (!this.alive || this.invulnerableTime > 0 || this.effects.has('shield')) {
+      return false;
+    }
+
+    this.#hp = Math.max(0, this.#hp - amount);
+    if (this.#hp === 0) {
+      this.alive = false;
+      return true;
+    }
+    return false;
+  }
+
+  applyPickup(effect, duration) {
+    this.effects.set(effect, duration);
+  }
+
+  repair(amount = 1) {
+    this.#hp = Math.min(this.#maxHp, this.#hp + amount);
+  }
+}
+
+function integrateState(ship, input, dt) {
   if (!Number.isFinite(dt) || dt < 0) {
     throw new RangeError('dt must be a non-negative finite number.');
   }
@@ -21,10 +117,11 @@ export function integrate(ship, input, dt) {
   const isThrusting = input.isDown('ArrowUp') || input.isDown('KeyW');
   const isBraking = input.isDown('Space');
   const angle = ship.angle + turn * SHIP_TUNING.rotationSpeed * dt;
-  const acceleration = isThrusting ? SHIP_TUNING.thrustAcceleration : 0;
   const drag = Math.exp(-(SHIP_TUNING.drag + (isBraking ? SHIP_TUNING.brakeStrength : 0)) * dt);
-  let vx = (ship.vx + Math.cos(angle) * acceleration * dt) * drag;
-  let vy = (ship.vy + Math.sin(angle) * acceleration * dt) * drag;
+  let vx =
+    (ship.vx + Math.cos(angle) * SHIP_TUNING.thrustAcceleration * Number(isThrusting) * dt) * drag;
+  let vy =
+    (ship.vy + Math.sin(angle) * SHIP_TUNING.thrustAcceleration * Number(isThrusting) * dt) * drag;
   const speed = Math.hypot(vx, vy);
 
   if (speed > SHIP_TUNING.maxSpeed) {
@@ -39,8 +136,13 @@ export function integrate(ship, input, dt) {
     vx,
     vy,
     angle,
-    thrust: isThrusting ? 1 : 0,
+    thrust: Number(isThrusting),
   };
+}
+
+// Lab 01 compatibility adapter; the class and adapter share exactly the same physics tuning.
+export function integrate(ship, input, dt) {
+  return integrateState(ship, input, dt);
 }
 
 function interpolateCoordinate(previous, current, alpha, size) {

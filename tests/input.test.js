@@ -24,11 +24,14 @@ test('createInput tracks held keys and just-pressed edges privately', () => {
   assert.equal(input.isDown('KeyW'), true);
   assert.equal(input.justPressed('KeyW'), true);
   assert.equal(prevented, true);
+  target.emit('keyup', { code: 'KeyW' });
+  target.emit('keydown', { code: 'KeyF', preventDefault: () => {} });
+  assert.equal(input.isDown('KeyF'), true);
 
   input.endFrame();
   assert.equal(input.justPressed('KeyW'), false);
-  target.emit('keyup', { code: 'KeyW' });
-  assert.equal(input.isDown('KeyW'), false);
+  target.emit('keyup', { code: 'KeyF' });
+  assert.equal(input.isDown('KeyF'), false);
 });
 
 test('createInput leaves experiment controls usable with the keyboard', () => {
