@@ -25,11 +25,13 @@ export function* collisionPairs(world) {
 }
 
 function addExplosion(world, entity) {
-  world.spawn(world.createExplosion(entity.pos.x, entity.pos.y));
+  const explosion = world.spawn(world.createExplosion(entity.pos.x, entity.pos.y));
+  world.emit('exploded', { entity, explosion });
 }
 
 function damageShip(world, ship, damage, events) {
   const destroyed = ship.takeDamage(damage);
+  world.emit('hit', { entity: ship, damage, destroyed });
   if (destroyed) {
     events.push({ type: 'ship-destroyed', entity: ship });
     addExplosion(world, ship);
@@ -49,6 +51,7 @@ function handleBulletCollision(world, bullet, target, events) {
 
   if (target.kind === 'asteroid') {
     const destroyed = target.takeDamage(bullet.damage);
+    world.emit('hit', { entity: target, damage: bullet.damage, destroyed });
     events.push({ type: destroyed ? 'asteroid-destroyed' : 'asteroid-hit', entity: target });
     if (destroyed) {
       addExplosion(world, target);

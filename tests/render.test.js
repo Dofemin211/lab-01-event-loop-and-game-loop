@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { drawShip, drawWorldScene } from '../src/render/draw.js';
+import { drawLoadingScreen, drawShip, drawWorldScene } from '../src/render/draw.js';
 import { Ship } from '../src/sim/ship.js';
 import { World } from '../src/sim/world.js';
 
@@ -72,4 +72,59 @@ test('Ship rendering adds both thrust-flame layers only while thrust is active',
 
   assert.equal(idleFills, 1);
   assert.equal(fills, 4);
+});
+
+test('Ship, bullet, and asteroid draw from the expected sprite-sheet source rectangles', () => {
+  const context = createRecordingContext();
+  const sourceRects = [];
+  context.drawImage = (_image, ...coordinates) => sourceRects.push(coordinates.slice(0, 4));
+  const sprites = { complete: true, naturalWidth: 112 };
+  const world = new World();
+  const ship = world.spawn(new Ship(100, 100, { invulnerableTime: 0 }));
+  const asteroid = world.addAsteroid(200, 200);
+  const bullet = ship.fire(world);
+  const stats = {
+    simulationStepsPerSecond: 60,
+    renderedFramesPerSecond: 60,
+    frameTimeMs: 1,
+  };
+
+  drawWorldScene(
+    context,
+    800,
+    600,
+    [],
+    world,
+    stats,
+    { score: 0, player: ship, respawnRemaining: 0 },
+    new Map(),
+    1,
+    0,
+    { sprites },
+  );
+
+  assert.ok(sourceRects.some((rect) => rect.join(',') === '0,0,32,32'));
+  assert.ok(sourceRects.some((rect) => rect.join(',') === '40,8,16,16'));
+  assert.ok(sourceRects.some((rect) => rect.join(',') === '64,0,48,48'));
+  assert.ok(bullet);
+  assert.ok(asteroid);
+});
+
+test('Loading canvas renders progress and clearly exposes required-asset failures', () => {
+  const context = createRecordingContext();
+  const fillRects = [];
+  context.fillRect = (...coordinates) => fillRects.push(coordinates);
+
+  drawLoadingScreen(context, 800, 600, { progress: 0.4, status: '2/5 assets ready' });
+  assert.ok(context.labels.includes('PREPARING FLIGHT DECK'));
+  assert.ok(context.labels.includes('2/5 assets ready'));
+  assert.equal(fillRects.at(-1)[2], 168);
+
+  drawLoadingScreen(context, 800, 600, {
+    progress: 0.4,
+    status: 'Required game content did not load.',
+    error: 'arena: invalid JSON',
+  });
+  assert.ok(context.labels.includes('ASSET LOADING FAILED'));
+  assert.ok(context.labels.includes('arena: invalid JSON'));
 });

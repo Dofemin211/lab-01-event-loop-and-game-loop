@@ -5,8 +5,8 @@ import { Vector2 } from './vector.js';
 import { World } from './world.js';
 
 export class GameSession {
-  constructor({ width = 800, height = 600, seed = 2025, asteroidCount = 6 } = {}) {
-    this.world = new World({ width, height, seed });
+  constructor({ width = 800, height = 600, seed = 2025, asteroidCount = 6, emit } = {}) {
+    this.world = new World({ width, height, seed, emit });
     this.score = 0;
     this.respawnRemaining = 0;
     this.player = this.world.spawn(new Ship(width / 2, height / 2));
@@ -45,8 +45,10 @@ export class GameSession {
     for (const event of events) {
       if (event.type === 'asteroid-destroyed') {
         this.score += 100;
+        this.world.emit('scoreChanged', { score: this.score });
       } else if (event.type === 'pickup-collected') {
         this.score += 25;
+        this.world.emit('scoreChanged', { score: this.score });
       } else if (event.type === 'ship-destroyed' && event.entity.id === this.player?.id) {
         this.player = null;
         this.respawnRemaining = 2;

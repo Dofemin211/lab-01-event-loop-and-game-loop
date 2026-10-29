@@ -1,0 +1,29 @@
+{
+  "assets": {
+    "sprites": {
+      "type": "image",
+      "src": "/assets/sprites.svg",
+      "required": true
+    },
+    "arena": {
+      "type": "json",
+      "src": "/assets/arena.json",
+      "required": true
+    },
+    "shoot": {
+      "type": "audio",
+      "src": "/assets/shoot.wav",
+      "required": false
+    },
+    "hit": {
+      "type": "audio",
+      "src": "/assets/hit.wav",
+      "required": false
+    },
+    "explosion": {
+      "type": "audio",
+      "src": "/assets/explosion.wav",
+      "required": false
+    }
+  }
+}

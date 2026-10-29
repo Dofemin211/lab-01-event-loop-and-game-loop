@@ -1,6 +1,6 @@
-# Dogfight — JavaScript Game Labs 01–02
+# Dogfight — JavaScript Game Labs 01–03
 
-A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 expands the same game with entity classes, shooting, collisions, pickups, and respawning.
+A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 adds cancellable asynchronous asset loading, a local HTTP lobby, sprite sheets, and Web Audio without replacing the existing simulation.
 
 ## Run it
 
@@ -50,7 +50,13 @@ eslint.config.js
 .prettierrc.json
 README.md
 src/
-  main.js             # Connects input, simulation, rendering, and optional experiments
+  main.js             # Loading → lobby → game bootstrap and Lab 01 experiments
+  assets/
+    loader.js         # Abortable fetch, retry/backoff, concurrent progress-aware loading
+  audio.js            # Web Audio context, decoded effect playback, event subscriptions
+  events.js           # Small EventTarget/CustomEvent bridge injected into simulation
+  hud.js              # DOM status updates driven by game events
+  lobby.js            # HTTP room data, validation, refresh lifecycle, join event
   loop.js             # Fixed-step accumulator, optional comparison modes, timing metrics
   input.js            # Closure-backed keyboard state and just-pressed edges
   sim/
@@ -68,16 +74,28 @@ src/
     arena.js          # Lab 01 pure wrap-around helper
   render/
     canvas.js         # Canvas 2D setup, resize observation, device-pixel ratio
-    draw.js           # Starfield, entities, effects, and HUD drawing
+    draw.js           # Loading screen, sprite/fallback rendering, effects, and HUD
+    lobby-ui.js       # DOM room list that subscribes to Lobby events
 tests/
+  audio.test.js
   entities.test.js
   game.test.js
   input.test.js
+  loader.test.js
+  lobby.test.js
   loop.test.js
+  render.test.js
   sim.test.js
+public/
+  api/rooms.json
+  assets/manifest.json
+  assets/arena.json
+  assets/sprites.svg
+  assets/*.wav
+vite.config.js        # Development-only slow/corrupt/404 failure-test endpoints
 ```
 
-`src/sim/` does not import the DOM, canvas, or browser APIs. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
+`src/sim/` does not import the DOM, canvas, audio, or HUD modules. It publishes game notifications only through an injected `emit(type, detail)` function; `main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 
 `createInput(target)` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances.
 
@@ -349,3 +367,360 @@ npm run build
 ```
 
 The optional Lab 01 stretch (gamepad, touch, frame-time histogram, worker) and Lab 02 stretch (typed-array ECS and spatial hash benchmark) remain outside the required deliverables.
+
+---
+
+## Lab 03 — Asynchronous JavaScript: Loading, Lobby, and Sound
+
+This lab extends the same local game and repository. It does not replace the fixed-step simulation. See the [original Lab 03 assignment](https://github.com/rmalkevy/Programming-Practice-Projects/blob/main/courses/javascript/lab-03-async-javascript.md).
+
+### Play the game
+
+```powershell
+npm install
+npm run dev
+```
+
+Open the Vite URL (usually `http://localhost:5173/`). The app loads its manifest, required sprite sheet and arena definition, plus optional decoded audio. The canvas draws an actual progress bar while requests settle. When required data is ready, the app fetches the local room list, refreshes it periodically, and displays the lobby. Enter a pilot name, select a room, and choose **Join selected room**. Joining starts the existing local game with the room's asteroid count and seed. The first Join click also asks the browser to resume Web Audio; if the browser blocks it, the game remains playable and reports the audio problem in the accessible status text.
+
+Use the Lab 01/02 controls documented above. With `?experiments=1`, the existing game-loop experiments remain available after joining. That panel also has a sequential-versus-concurrent asset transfer measurement.
+
+### Architecture and loading lifecycle
+
+```text
+main.js
+  ├─ creates EventTarget, Web Audio owner, canvas, and lobby UI
+  ├─ fetchJson/loadJson + withRetry → manifest
+  ├─ loadAll (parallel required/optional items + item progress)
+  ├─ decode optional audio before play; draw sprites from the loaded sheet
+  ├─ Lobby.refresh() → GET /api/rooms.json → roomsChanged
+  └─ Lobby.join() → GameSession → original fixed-step createLoop
+
+src/sim/
+  └─ emits event names/details through an injected emit function only
+      ├─ events.js → EventTarget/CustomEvent
+      ├─ audio.js → fired / hit / exploded
+      └─ hud.js → scoreChanged / roomJoined / audioError
+```
+
+The simulation imports neither the audio module nor the DOM HUD. Its event callback is injected by the bootstrap, so simulation and Canvas tests do not need a browser. The lobby's data layer extends `EventTarget`; `src/render/lobby-ui.js` subscribes to it and owns DOM rendering. A generation counter prevents stale room responses from replacing new data. The polling loop schedules its next timeout only after the current refresh finishes; `Lobby.stop()` aborts an in-flight request, clears the timer, and invalidates old results. Each HTTP room request combines a request controller with `AbortSignal.timeout(3000)`.
+
+The request URL `/api/rooms.json` maps directly to `public/api/rooms.json`, so Vite copies the same static endpoint into the production `dist/api/rooms.json`. Each room contains an `arena` configuration; the selected room's asteroid count and seed are passed into `GameSession`, while current Canvas dimensions remain the logical play area.
+
+`public/assets/manifest.json` names the sprite sheet, arena JSON, and three local PCM sound effects. `loadAll()` starts independent entries concurrently, reports progress after each item settles, tolerates failed optional sounds, and rejects with `AssetLoadError` if any required asset fails. Image fetches check HTTP status before decoding through an object URL; this is important because otherwise an `<img>` error hides whether the server actually returned 404. Audio buffers are decoded before entering the lobby. Ship, bullet, and asteroid draw calls use the source rectangles `(0,0,32,32)`, `(40,8,16,16)`, and `(64,0,48,48)` from the same sheet. If a sheet is unavailable, the renderer still has the previous procedural shapes as a fallback; a required-sheet loading failure is shown with a retry option instead of starting in a misleading partial state.
+
+`withRetry(fn, { attempts, baseMs, signal })` uses exponential backoff with full jitter for network `TypeError`s and HTTP 5xx. It does not retry `HttpError` 4xx, malformed JSON, or cancellation. The cancellable delay removes its timer and abort listener on completion or cancellation. `loadImage`, `loadAudio`, `loadJson`, and `fetchJson` all accept a signal; JSON and audio fetches check `response.ok`.
+
+### Async JavaScript: the essential model
+
+#### Callbacks and the reason Promises help
+
+A callback is a function passed to an API to be invoked later, such as an image `load` handler or a timer. Callbacks are still how browser events are delivered. A chain of dependent callbacks can become deeply nested (“callback hell”), every layer must remember its own error branch, and control is inverted: the API receiving a callback controls when/how often it calls it. There is also no built-in way to wait for several callback operations together. Promises wrap one eventual result in a consistent contract.
+
+#### Promise state, chaining, and errors
+
+A Promise starts **pending** and may settle exactly once, either as **fulfilled** with a value or **rejected** with a reason. Settlement cannot move backward or change to the other terminal state. Calling `.then(onFulfilled, onRejected)` returns a new promise. A normal return fulfills that next promise; returning another promise makes the chain wait for it; throwing rejects it. `.catch(handler)` is the rejection form of `.then`. `.finally(handler)` runs after either outcome and normally passes the original value or rejection onward. If the `finally` handler itself throws or returns a rejected promise, that new failure replaces the previous outcome.
+
+Promise reactions always run asynchronously as **microtasks**, even if the promise is already fulfilled:
+
+```js
+Promise.resolve('later').then(console.log);
+console.log('now');
+// now
+// later
+```
+
+Rejections keep propagating until a handler catches them. If a chain has no rejection handler, browsers report an `unhandledrejection` event/console error; Node's default unhandled-rejection mode terminates the process with a non-zero status. Attach a meaningful catch, or let a caller deliberately handle the rejected operation; do not make a successful-looking fallback that hides a real failure.
+
+#### `async`/`await` is non-blocking Promise syntax
+
+An `async` function always returns a promise. `await` suspends only that function: it returns control to the event loop, and resumes the function as a microtask when the awaited promise settles. Rejection resumes by throwing at the `await`, so `try/catch` works naturally:
+
+```js
+async function loadArena() {
+  try {
+    const arena = await loadJson('/assets/arena.json');
+    return arena;
+  } catch (error) {
+    console.error('Arena loading failed:', error);
+    throw error;
+  }
+}
+```
+
+This is the asynchronous equivalent of:
+
+```js
+function loadArena() {
+  return loadJson('/assets/arena.json').then(
+    (arena) => arena,
+    (error) => {
+      console.error('Arena loading failed:', error);
+      throw error;
+    },
+  );
+}
+```
+
+The function gives the current task back to the event loop at `await`; it is not holding the JavaScript call stack while the network works.
+
+#### Promise combinators
+
+| Combinator                   | Settlement rule                                                                                                           | A game-related use                                                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `Promise.all(values)`        | Fulfills when all fulfill, preserving input order; rejects on the first rejection. It does **not** cancel the other work. | Required sprite and arena assets; the loader also handles optional entries and per-item progress.                             |
+| `Promise.allSettled(values)` | Waits for every outcome and returns `{ status, value/reason }` records.                                                   | Report which optional sound effects could not be decoded while allowing the game to continue.                                 |
+| `Promise.race(values)`       | Takes the first settlement, fulfilled or rejected.                                                                        | Apply a timeout by racing a task with a timeout rejection (prefer `AbortSignal.timeout` when the request itself should stop). |
+| `Promise.any(values)`        | Takes the first fulfillment; rejects with `AggregateError` only if all reject.                                            | Future asset mirrors: accept the first working CDN.                                                                           |
+
+When `Promise.all` rejects, its other promises keep running unless their shared `AbortSignal` is explicitly aborted. The loader wraps each entry with progress accounting, then joins the concurrent work with `Promise.all`; required failures are collected and never returned as a successful asset result.
+
+#### `fetch`, response bodies, timeouts, and retry
+
+`fetch(url)` fulfills when response headers arrive. An HTTP 404 is still a fulfilled fetch promise; inspect `response.ok` and `response.status`. Reading `response.json()`, `.arrayBuffer()`, or `.blob()` is a second asynchronous operation that consumes the response body. `fetchJson()` centralizes the status check so a 404 cannot masquerade as an empty successful room list.
+
+Promises do not have a `.cancel()` method. `AbortController` supplies a signal to APIs that support it; calling `controller.abort()` asks the fetch/body read and our own signal-aware work to stop. `AbortSignal.timeout(ms)` creates a signal that aborts after a deadline. An application can combine a lifecycle controller with a timeout using `AbortSignal.any([controller.signal, AbortSignal.timeout(ms)])`. A cancellable function should accept a signal, check `signal.aborted` before starting work, pass it to cancellable APIs, listen for `abort` during timers or custom work, clean up listeners/timers, and reject with the abort reason.
+
+For retryable transient failures, exponential backoff increases the delay after each attempt (`baseMs × 2ⁿ`) and jitter randomizes the wait so many clients do not retry in lockstep. Do not retry permanent client errors (400–499), corrupt data, or an intentional cancellation. This project tests retries without external network access.
+
+#### Events, async iteration, and Web Audio
+
+An event reports repeated facts over time (“a shot fired”, “rooms changed”). A promise represents one eventual result (“this manifest finished loading”). `EventTarget` and `CustomEvent(type, { detail })` provide a small browser-native event channel. The game injects an emitter; audio and HUD subscribe independently. To turn one event into one promise, use a once listener:
+
+```js
+const ready = new Promise((resolve) => {
+  lobby.addEventListener('roomsChanged', resolve, { once: true });
+});
+await ready;
+```
+
+An async iterable's `next()` returns a promise, so `for await (const item of source)` waits for each next value. A `ReadableStream` such as `response.body` can yield download chunks before the whole file arrives. That makes byte-level progress possible if the server provides `Content-Length`; this lab keeps assets small and does not implement the optional streaming stretch.
+
+Web Audio loading has distinct steps: fetch bytes, read `arrayBuffer()`, decode with `AudioContext.decodeAudioData()`, then play an `AudioBuffer` through a new `AudioBufferSourceNode`. This app decodes during loading, not on the first shot. Browsers may keep an `AudioContext` suspended until a user gesture; Join calls `resume()` from the click path. Separate source nodes allow short effects to overlap. Audio failures are surfaced, but sound is optional and cannot prevent flight.
+
+### Five task/microtask ordering puzzles
+
+Run each snippet in a **visible foreground browser tab**. `requestAnimationFrame` depends on a rendering opportunity, so do not run the rAF puzzles in a background tab.
+
+1. **`await`, a timer scheduled inside `.then`, and rAF**
+
+   ```js
+   console.log('sync 1');
+   Promise.resolve().then(() => {
+     console.log('then');
+     setTimeout(() => {
+       console.log('timer');
+       requestAnimationFrame(() => console.log('raf'));
+     }, 0);
+   });
+   (async () => {
+     console.log('async start');
+     await null;
+     console.log('async resume');
+   })();
+   console.log('sync 2');
+   ```
+
+   **Output:** `sync 1`, `async start`, `sync 2`, `then`, `async resume`, `timer`, `raf`. The first logs are on the current stack. The `.then` and `await` continuations are microtasks in the order queued. The `.then` creates a timer task; that timer schedules rAF for a later visible rendering opportunity.
+
+2. **Chaining and `finally`**
+
+   ```js
+   Promise.resolve(2)
+     .then((value) => {
+       console.log('then', value);
+       return value * 3;
+     })
+     .then((value) => console.log('next', value))
+     .finally(() => console.log('finally'));
+   console.log('sync');
+   ```
+
+   **Output:** `sync`, `then 2`, `next 6`, `finally`. Each continuation is asynchronous; each `.then` receives the prior handler's result.
+
+3. **A rejection through catch**
+
+   ```js
+   Promise.reject(new Error('boom'))
+     .catch((error) => {
+       console.log('caught', error.message);
+       return 'recovered';
+     })
+     .then((value) => console.log(value));
+   console.log('stack done');
+   ```
+
+   **Output:** `stack done`, `caught boom`, `recovered`. The catch turns rejection into a fulfilled value for the next link.
+
+4. **Two async continuations and a queued microtask**
+
+   ```js
+   async function first() {
+     console.log('first');
+     await Promise.resolve();
+     console.log('first resume');
+   }
+   async function second() {
+     console.log('second');
+     await 0;
+     console.log('second resume');
+   }
+   first();
+   second();
+   queueMicrotask(() => console.log('queued'));
+   console.log('sync end');
+   ```
+
+   **Output:** `first`, `second`, `sync end`, `first resume`, `second resume`, `queued`. Both async functions run synchronously until their first `await`; their resumptions enter the microtask queue before the explicit `queueMicrotask`.
+
+5. **A microtask queues another microtask**
+
+   ```js
+   Promise.resolve().then(() => {
+     console.log('A');
+     queueMicrotask(() => console.log('C'));
+     console.log('B');
+   });
+   queueMicrotask(() => console.log('D'));
+   console.log('sync');
+   ```
+
+   **Output:** `sync`, `A`, `B`, `D`, `C`. `A`'s callback appends `C` behind `D`, which was already waiting. The browser drains the microtask queue until empty before choosing another task.
+
+### Five original Lab 03 console experiments
+
+1. **Promise and async order.** First run:
+
+   ```js
+   Promise.resolve(1).then(console.log);
+   console.log(2);
+   ```
+
+   Output: `2`, then `1`. Now run the async puzzle, first without the timer and then with the timer line at the top:
+
+   ```js
+   async function a() {
+     console.log(1);
+     await null;
+     console.log(2);
+   }
+   a();
+   console.log(3);
+   setTimeout(() => console.log(4), 0);
+   ```
+
+   The async output is `1`, `3`, `2`, then `4`: `await` yields to a microtask even for `null`, while the timer is a later task.
+
+2. **HTTP error versus network error.** Run `fetch('/api/no-such-room.json').then((r) => console.log(r.ok, r.status))`. The request fulfills with `false 404`; it does not reject merely because of the status. A request to an invalid host rejects due to a network failure (often a `TypeError`). Use same-origin paths to avoid CORS masking the lesson.
+3. **Sequential versus parallel waits.** Run:
+
+   ```js
+   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+   let start = performance.now();
+   await delay(1000);
+   await delay(1000);
+   console.log('sequential ms', (performance.now() - start).toFixed(0));
+   start = performance.now();
+   await Promise.all([delay(1000), delay(1000)]);
+   console.log('parallel ms', (performance.now() - start).toFixed(0));
+   ```
+
+   Expect about 2000 ms then about 1000 ms, with normal timer scheduling variation.
+
+4. **Abort a request.** For the original external demonstration, try `fetch('https://httpbin.org/delay/5', { signal: controller.signal }).catch((e) => console.log(e.name))`, then call `controller.abort()`; expect `AbortError`. This project has a local slow endpoint for controlled testing. `AbortSignal.timeout(1000)` aborts with `TimeoutError` if the request lasts longer.
+5. **Unhandled rejection.** Run `Promise.reject(new Error('x'))` and observe the browser's unhandled-rejection console report. Then install `window.addEventListener('unhandledrejection', (event) => console.log(event.reason.message))` and repeat. In Node, `node -e "Promise.reject(new Error('x'))"` exits non-zero by default because Node treats the unhandled rejection as a process failure.
+
+### Reproducible project measurements
+
+Join any room, open the app with `?experiments=1`, then click **Compare sequential vs concurrent asset loading**. The measurement downloads the same five local manifest resources in sequence and with `Promise.all`, uses a unique cache-busting query and `cache: 'no-store'`, and records browser, time, byte count, and elapsed time. It measures local HTTP transfer/body-read time (not image/audio decode), so results depend on browser, machine, and server.
+
+| Browser run (2026-10-29, local Vite)         | Requests | Sequential await | `Promise.all` | Bytes each | Conditions                                 |
+| -------------------------------------------- | -------: | ---------------: | ------------: | ---------: | ------------------------------------------ |
+| Integrated browser, Chrome 150 / Electron 43 |        5 |         14.30 ms |       4.90 ms |     21,656 | localhost, cache disabled for each request |
+
+These are actual results from this workspace's integrated browser, not a general performance guarantee. To collect your own, capture the complete JSON in the panel and replace/add a row with browser/version and conditions. The measurement button runs only in the developer experiments panel.
+
+### Failure gallery: actual browser run and recovery
+
+In the Vite **development** build, the lobby exposes **Development failure gallery**. Select a case and click **Run loading failure test**. The test endpoints exist only in the Vite dev middleware; they are not included in the production bundle. The loading screen exposes the actual progress, status, and **Retry loading** button. After a failure, choose **Normal loading** in the loading screen's developer selector and retry to recover. Optional audio failures instead allow the game to continue with a status message.
+
+These four cases were run in the integrated browser on 2026-10-29. The messages below were read from the actual loading UI; no page-level exception or unhandled rejection occurred. Chrome logged the deliberate 404 as “Failed to load resource: the server responded with a status of 404 (Not Found)”; the two slow-endpoint requests were cancelled by the timeout/abort cases and reported `net::ERR_ABORTED` in the browser's request-failure event. Each case was then retried with Normal loading selected, and all four returned to the lobby with three rooms.
+
+| Scenario                   | Actual UI result                                                               | Recovery behavior                                                                                         | Browser verification                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Required sprite HTTP 404   | `sprites: Request failed for /api/dev/missing-sprites.svg: HTTP 404 Not Found` | Required asset blocks startup; Retry remains visible. Choose Normal loading and retry to enter the lobby. | Vite route returns HTTP 404; regression test verifies a 404 is attempted once, not retried.            |
+| Arena request timeout      | `arena: signal timed out`                                                      | Timeout cancels that item; loading remains in an error state with Retry.                                  | Local slow endpoint exceeds the manifest's 250 ms timeout; no unhandled rejection.                     |
+| Abort during asset loading | `Aborted by the Lab 03 failure test.`                                          | Shared controller cancels outstanding requests; the Retry button remains available.                       | The browser reports aborted slow-endpoint requests; cancellation test covers loader and lobby signals. |
+| Corrupt arena JSON         | `arena: Unexpected end of JSON input`                                          | Parse error is permanent (not retried); Retry allows another attempt, and Normal loading recovers.        | Actual HTTP 200 body was invalid JSON; no unhandled rejection.                                         |
+
+No screenshots are committed; the observed UI messages are the failure-gallery evidence. To save your own evidence, use the local Vite development page, run one failure at a time, wait for the visible error and Retry button, then press **Win+Shift+S** and capture the canvas plus error controls. For request evidence, open DevTools → **Network**, select the failed request, and capture its status/body. For console evidence, open DevTools → **Console**, enable **Preserve log**, and capture any output; the expected recovery path should not emit an unhandled rejection.
+
+### Lab 03 reflection answers
+
+1. **Promise states and microtasks.** A promise is pending, then settles once to fulfilled(value) or rejected(reason). A `.then` attached after fulfillment still queues a reaction; it runs as a microtask after the current JavaScript stack, not inline.
+2. **Desugaring `await`.** `async function f() { const a = await g(); return a + 1; }` must call `g()` immediately, turn a synchronous throw into a rejected promise, and await its returned value. One close equivalent is:
+
+   ```js
+   function f() {
+     let result;
+     try {
+       result = g();
+     } catch (error) {
+       return Promise.reject(error);
+     }
+     return Promise.resolve(result).then((value) => value + 1);
+   }
+   ```
+
+   The async function returns control at its `await`; its continuation resumes as a microtask after `g()` settles.
+
+3. **Ordering puzzle.** Given `setTimeout(log1); Promise.resolve().then(log2).then(log3); (async () => { log4; await 0; log5 })(); log6`, the order is `log4`, `log6`, `log2`, `log5`, `log3`, `log1`. The async IIFE logs before it suspends; the current script logs `log6`; then the first `.then` reaction is queued before the `await 0` continuation; that continuation queues the second chained reaction; the timer is a later task.
+4. **The four combinators.** `all` is suitable for the required manifest assets; `allSettled` reports optional sound failures; `race` can model the first response/timeout; `any` can choose a healthy mirror. If `all` rejects, it rejects its own result immediately, but the other input operations keep running unless explicitly aborted.
+5. **Why fetch accepts a 404.** HTTP status is a valid response to a network request, not a transport failure, so `fetch` fulfills with a `Response`. First await the headers and check `ok`; then separately await the body parser such as `json()`. Body streaming is separate so the browser can deliver data incrementally.
+6. **Cancellation.** A controller owns an `AbortSignal`; APIs and custom work listen to that signal and reject when it is aborted. A custom function checks already-aborted input, forwards the signal to fetch, checks during delays, removes listeners/timers in cleanup, and rejects with `signal.reason`. The promise itself is not mutated with a cancel method.
+7. **Promise versus event.** Use a promise for one result and an event for repeated changes. Await one event with `new Promise((resolve) => target.addEventListener('ready', resolve, { once: true }))`; publish a promise result as an event with `promise.then((value) => target.dispatchEvent(new CustomEvent('ready', { detail: value })))`, while also attaching a catch for failures.
+8. **Unhandled rejection.** Browsers dispatch `unhandledrejection` and report the failure to DevTools, allowing page-level observation. Node's default policy treats it as an uncaught failure and exits non-zero. A page may continue after one failed task, while an unhandled failure in a server process may leave it in an invalid state; both surfaces make the bug visible rather than silently pretending success.
+
+### Lab 03 requirement traceability
+
+The table distinguishes automated evidence from actions that still need a real user/browser. A code path or test does not count as proof that a manual exercise was performed.
+
+| Lab / requirement                                                                           | Implementation                                                                                      | Status                                                   | Actual verification                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lab 01: rAF, fixed accumulator, clamp, interpolation, lifecycle, metrics                    | `src/loop.js`; `src/main.js`; `src/render/draw.js`                                                  | Implemented                                              | Loop tests cover fixed steps, alpha, duplicate start/stop, and long-frame clamp; HUD tests cover steps/s, FPS, and frame time.                                                    |
+| Lab 01: keyboard input, ship physics, wrap, Canvas DPR/resize, starfield/flame              | `src/input.js`; `src/sim/ship.js`; `src/sim/arena.js`; `src/render/canvas.js`; `src/render/draw.js` | Implemented; tactile feel manual                         | Simulation and input regression tests pass. Browser join and W/F input were exercised; screenshot/resizing remain user-repeatable manual checks.                                  |
+| Lab 01 experiments and documentation                                                        | `src/main.js`; `src/loop.js`; combined README                                                       | Implemented; background-tab and 6× manual runs remain    | Existing Lab 01 measurements were preserved. Current default is still fixed rAF; previous manual experiment gaps remain listed in the Lab 01 audit.                               |
+| Lab 02: `Vector2`, `Entity`, `Ship extends Entity`, `Map` World and iterators               | `src/sim/vector.js`; `src/sim/entity.js`; `src/sim/ship.js`; `src/sim/world.js`                     | Implemented                                              | Entity/world tests pass.                                                                                                                                                          |
+| Lab 02: bullets, asteroids, collisions, health, explosions, score, pickups, homing, respawn | `src/sim/{bullet,asteroid,collision,explosion,pickup,homing,game}.js`                               | Implemented                                              | Combat and game tests pass, including safe two-second respawn.                                                                                                                    |
+| Lab 02: `this`, composition, console exercises, reflection                                  | `src/sim/homing.js`; `src/sim/ship.js`; README                                                      | Implemented; console exercises manual                    | Automated receiver/composition tests pass; original explanations and exercises remain in the Lab 02 README section.                                                               |
+| Lab 03 M1: `loadImage`, `loadAudio`, `loadJson`, `fetchJson`, `response.ok`, aborts         | `src/assets/loader.js`                                                                              | Implemented                                              | Loader tests cover successful/error fetches, corrupt JSON, image abort, audio decode, and status checks.                                                                          |
+| Lab 03 M1: retry/backoff/jitter, no 4xx retry, cancellation cleanup                         | `src/assets/loader.js` — `withRetry`, `abortableDelay`                                              | Implemented                                              | Tests verify attempts/delays, no retry on HTTP 4xx, cancellation during backoff, and timeout propagation.                                                                         |
+| Lab 03 M1: concurrent required/optional loading and item progress                           | `src/assets/loader.js` — `loadAll`; `public/assets/manifest.json`                                   | Implemented                                              | Tests prove both loaders start before either settles, progress reaches 1, optional failure is tolerated, and required failure rejects.                                            |
+| Lab 03 M1: loading screen, progress, clear errors, cancellation, retry                      | `src/main.js`; `src/render/draw.js` — `drawLoadingScreen`; `index.html`                             | Implemented                                              | Integrated browser showed progress/startup and all four failure messages with retry visible.                                                                                      |
+| Lab 03 M2: sprite-sheet drawing and fallback                                                | `src/render/draw.js`; `public/assets/sprites.svg`                                                   | Implemented                                              | Render tests assert all three source rectangles; browser loaded the sprite asset and entered gameplay.                                                                            |
+| Lab 03 M2: Web Audio context, gesture unlock, decoded buffers, overlapping SFX              | `src/audio.js`; `src/assets/loader.js`; `src/main.js`                                               | Implemented; audible output requires manual verification | Fake-context tests verify gesture unlock, separate overlapping source nodes, and cleanup. Browser Join exercised unlock, but speakers/headphones were not independently assessed. |
+| Lab 03 M2: decoupled simulation/audio/HUD events                                            | `src/sim/world.js`; `src/sim/game.js`; `src/events.js`; `src/audio.js`; `src/hud.js`                | Implemented                                              | Search confirms `src/sim/` imports neither audio nor HUD; tests cover injected events and audio subscriptions.                                                                    |
+| Lab 03 M3: validated HTTP lobby, room selection, local arena config                         | `src/lobby.js`; `src/render/lobby-ui.js`; `public/api/rooms.json`; `src/main.js`                    | Implemented                                              | Browser loaded three rooms, selected Training sector, and started the game; unit tests cover validation and join event.                                                           |
+| Lab 03 M3: timeout, periodic refresh, cancellation, stale-response defense                  | `src/lobby.js` — `refresh`, `start`, `stop`, `join`                                                 | Implemented                                              | Tests cover timeout recovery, abort on stop, and stale response ordering; the live lobby request and refresh ran in browser.                                                      |
+| Lab 03 M4: five ordering puzzles and five original console exercises                        | README Lab 03 sections                                                                              | Written; manual console execution required               | Snippets and deterministic expected outputs are documented; they were not run as manual student exercises.                                                                        |
+| Lab 03 M4: 404, timeout, abort, corrupt JSON recovery                                       | Dev-only routes in `vite.config.js`; loading UI in `src/main.js`                                    | Implemented and browser-run                              | All four messages and Retry buttons were observed; retrying with Normal loading returned to the three-room lobby; no page-level exception/unhandled rejection.                    |
+| Lab 03 concurrent-vs-sequential actual timing                                               | `src/main.js` experiment panel; `README.md` result table                                            | Implemented and measured                                 | Integrated browser measured 14.30 ms sequential vs 4.90 ms concurrent for five cache-busted local requests, 21,656 bytes each.                                                    |
+| Lab 03 reflection, theory, setup, architecture, failure evidence                            | README Lab 03 sections                                                                              | Written                                                  | Includes all eight answers and all required concepts; failure messages and measurements come from actual browser runs.                                                            |
+| Lab 03 complete checks and `lab-03` tag                                                     | `package.json`; tests; Git                                                                          | Checks passed; local commit/tag follows                  | `npm test`: 53 passed, 0 failed; ESLint and Prettier pass; Vite production build succeeds with all public assets. The completion commit will receive the new `lab-03` tag.        |
+
+### Lab 03 deliverable checklist
+
+- [x] Local asset manifest with sprites, arena data, and sound effects; required/optional semantics.
+- [x] Abortable image/audio/JSON loading; `fetchJson` checks HTTP status.
+- [x] Concurrent `loadAll`, actual item progress, exponential backoff/jitter, cancellation, no HTTP 4xx retry.
+- [x] Canvas loading screen, status/error text, cancel and retry controls.
+- [x] Spritesheet drawImage source rectangles plus procedural fallback.
+- [x] Web Audio decode during loading, click-path unlock, overlapping source nodes.
+- [x] Injected `EventTarget`/`CustomEvent` event boundary; simulation imports no audio or HUD module.
+- [x] Static HTTP lobby, validated room data, room configuration, timed periodic refresh, cancellation, stale-response guard.
+- [x] Five task/microtask puzzles, five original console experiments, all eight Lab 03 reflection answers.
+- [x] Actual sequential/concurrent browser timing and all four development failure modes exercised.
+- [ ] Manually listen to the effects on the target device, execute the console exercises yourself, and capture screenshots if required by the instructor. Browser automation already exercised all four retry-to-normal paths.
+- [x] Final tests, lint, formatting check, and production build pass; create the Lab 03 commit and `lab-03` tag locally. No push is performed.
+
+The optional Lab 03 stretch—byte-level stream progress, priority async-generator loading, and hand-written `Promise.all`/`allSettled`—is not implemented; it is not part of the required definition of done.

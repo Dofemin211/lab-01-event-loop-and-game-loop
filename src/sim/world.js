@@ -12,7 +12,13 @@ export class World {
   #randomState;
   #collisionSystem;
 
-  constructor({ width = 800, height = 600, seed = 2025, collisionSystem = collisionPairs } = {}) {
+  constructor({
+    width = 800,
+    height = 600,
+    seed = 2025,
+    collisionSystem = collisionPairs,
+    emit = () => {},
+  } = {}) {
     if (width <= 0 || height <= 0) {
       throw new RangeError('World width and height must be positive.');
     }
@@ -20,6 +26,7 @@ export class World {
     this.height = height;
     this.#randomState = seed >>> 0;
     this.#collisionSystem = collisionSystem;
+    this.emit = emit;
   }
 
   get size() {

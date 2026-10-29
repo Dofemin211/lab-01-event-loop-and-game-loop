@@ -102,6 +102,188 @@ select {
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
 }
 
+.flight-deck > [hidden] {
+  display: none !important;
+}
+
+.flight-deck .flight-label[hidden],
+.flight-deck .coordinate-label[hidden] {
+  display: none;
+}
+
+.loading-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(137, 199, 230, 0.2);
+  border-radius: 8px;
+  background: rgba(5, 16, 28, 0.88);
+}
+
+.loading-actions p {
+  flex-basis: 100%;
+  margin: 0;
+  color: #ffb2a5;
+  text-align: center;
+  font:
+    12px/1.5 'DM Mono',
+    monospace;
+}
+
+.loading-actions button,
+.lobby-actions button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid #4598b9;
+  border-radius: 6px;
+  color: #e6f4fb;
+  background: #12425a;
+  cursor: pointer;
+}
+
+.loading-actions .secondary-button,
+.lobby-actions .secondary-button {
+  border-color: rgba(171, 209, 229, 0.25);
+  background: #102437;
+}
+
+.loading-actions label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #a7bdcb;
+  font-size: 12px;
+}
+
+.loading-actions [hidden] {
+  display: none !important;
+}
+
+.loading-actions select,
+#player-name {
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid rgba(171, 209, 229, 0.25);
+  border-radius: 6px;
+  color: #e6f4fb;
+  background: #102437;
+}
+
+.lobby-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: clamp(20px, 6vw, 64px);
+  overflow: auto;
+  background: rgba(5, 16, 28, 0.92);
+}
+
+.lobby-heading .eyebrow {
+  margin-bottom: 6px;
+}
+
+.lobby-heading h1 {
+  margin: 0 0 4px;
+  font-size: clamp(22px, 4vw, 34px);
+}
+
+.player-name-label {
+  color: #a7bdcb;
+  font-size: 12px;
+}
+
+#player-name {
+  width: min(100%, 320px);
+}
+
+.room-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.room-card {
+  display: grid;
+  gap: 9px;
+  min-height: 82px;
+  padding: 14px;
+  border: 1px solid rgba(171, 209, 229, 0.2);
+  border-radius: 8px;
+  color: #d9f3ff;
+  background: #102437;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-card[aria-pressed='true'] {
+  border-color: #63d3ff;
+  box-shadow: 0 0 0 1px #63d3ff;
+}
+
+.room-card span {
+  color: #91aabb;
+  font:
+    11px/1.5 'DM Mono',
+    monospace;
+}
+
+.room-card:disabled,
+.lobby-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+#lobby-status {
+  min-height: 1.5em;
+  margin: 0;
+  color: #a7bdcb;
+  font-size: 13px;
+}
+
+.lobby-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.lobby-failure-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #a7bdcb;
+  font-size: 12px;
+}
+
+.lobby-failure-tools[hidden] {
+  display: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+#game-controls[hidden] {
+  display: none;
+}
+
 #game {
   display: block;
   width: 100%;

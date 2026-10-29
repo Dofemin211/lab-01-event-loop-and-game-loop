@@ -15,7 +15,7 @@
       <header class="topbar">
         <a class="brand" href="/" aria-label="Dogfight home">
           <span class="brand-mark" aria-hidden="true">✦</span>
-          <span>DOGFIGHT <span class="brand-divider">/</span> LAB 02</span>
+          <span>DOGFIGHT <span class="brand-divider">/</span> LAB 03</span>
         </a>
         <p class="topbar-note">A tiny flight simulator for a big JavaScript idea</p>
         <span class="guide-link">EVENT LOOP / CANVAS</span>
@@ -25,15 +25,59 @@
         <canvas id="game" aria-label="Space flight arena. Use the keyboard to fly.">
           Your browser does not support the Canvas 2D API.
         </canvas>
-        <div class="flight-label" aria-hidden="true">
+        <div id="loading-actions" class="loading-actions" hidden>
+          <p id="loading-message" role="status" aria-live="polite"></p>
+          <button id="retry-loading" type="button">Retry loading</button>
+          <button id="cancel-loading" type="button" class="secondary-button">
+            Cancel current load
+          </button>
+          <label id="loading-failure-test-control" hidden>
+            Development failure test
+            <select id="loading-failure-mode">
+              <option value="">Normal loading</option>
+              <option value="404">Required sprite HTTP 404</option>
+              <option value="timeout">Arena request timeout</option>
+              <option value="abort">Abort during arena request</option>
+              <option value="json">Corrupt arena JSON</option>
+            </select>
+          </label>
+        </div>
+        <section id="lobby-screen" class="lobby-screen" aria-labelledby="lobby-title" hidden>
+          <div class="lobby-heading">
+            <p class="eyebrow">LOCAL FLIGHT ROOMS</p>
+            <h1 id="lobby-title">Choose your sector</h1>
+          </div>
+          <label class="player-name-label" for="player-name">Pilot name</label>
+          <input id="player-name" maxlength="24" value="Pilot" autocomplete="nickname" />
+          <div id="room-list" class="room-list" aria-label="Available rooms"></div>
+          <p id="lobby-status" role="status" aria-live="polite">Contacting the room server…</p>
+          <div id="lobby-failure-test-control" class="lobby-failure-tools" hidden>
+            <label for="lobby-failure-mode">Development failure gallery</label>
+            <select id="lobby-failure-mode">
+              <option value="404">Required sprite HTTP 404</option>
+              <option value="timeout">Arena request timeout</option>
+              <option value="abort">Abort during arena request</option>
+              <option value="json">Corrupt arena JSON</option>
+            </select>
+            <button id="run-failure-test" type="button" class="secondary-button">
+              Run loading failure test
+            </button>
+          </div>
+          <div class="lobby-actions">
+            <button id="refresh-rooms" type="button" class="secondary-button">Refresh rooms</button>
+            <button id="join-room" type="button" disabled>Join selected room</button>
+          </div>
+        </section>
+        <p id="game-status" class="visually-hidden" aria-live="polite"></p>
+        <div class="flight-label" aria-hidden="true" hidden>
           <span class="status-dot"></span>
           <span>FLIGHT SIMULATION</span>
         </div>
-        <div class="coordinate-label" aria-hidden="true">SECTOR 01 · WRAP-AROUND ARENA</div>
+        <div class="coordinate-label" aria-hidden="true" hidden>SECTOR 01 · WRAP-AROUND ARENA</div>
       </section>
 
       <footer class="controls-bar">
-        <div class="control-group" aria-label="Game controls">
+        <div id="game-controls" class="control-group" aria-label="Game controls" hidden>
           <span class="key-hint"><kbd>W</kbd><kbd>↑</kbd><span>THRUST</span></span>
           <span class="key-hint"><kbd>A</kbd><kbd>←</kbd><span>TURN LEFT</span></span>
           <span class="key-hint"><kbd>D</kbd><kbd>→</kbd><span>TURN RIGHT</span></span>
@@ -75,6 +119,9 @@
           <button id="capture-position" type="button" class="secondary-button">
             Capture ship position
           </button>
+          <button id="measure-assets" type="button" class="secondary-button">
+            Compare sequential vs concurrent asset loading
+          </button>
           <button id="reset" type="button" class="secondary-button">Reset ship</button>
         </div>
         <p class="experiment-hint">
@@ -86,6 +133,8 @@
 No measurement recorded yet.</pre>
         <pre id="position-output" class="experiment-output" aria-live="polite">
 Ship position: not captured.</pre>
+        <pre id="asset-measurement-output" class="experiment-output" aria-live="polite">
+Asset loading comparison: not measured.</pre>
       </section>
     </main>
     <script type="module" src="/src/main.js"></script>

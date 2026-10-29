@@ -81,6 +81,7 @@ export class Ship extends Entity {
       ownerId: this.id,
     });
     world.spawn(bullet);
+    world.emit('fired', { ship: this, bullet });
     return bullet;
   }
 
