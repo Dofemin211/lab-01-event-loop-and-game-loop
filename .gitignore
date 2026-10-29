@@ -1,5 +1,10 @@
 node_modules/
 dist/
 coverage/
+.env
+.env.*
+!.env.example
+*.local
 .DS_Store
 *.log
+npm-debug.log*
