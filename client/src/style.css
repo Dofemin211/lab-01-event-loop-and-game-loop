@@ -284,6 +284,88 @@ select {
   display: none;
 }
 
+.multiplayer-panel[hidden] {
+  display: none;
+}
+
+.multiplayer-panel {
+  position: absolute;
+  top: 72px;
+  right: 16px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  width: min(300px, calc(100% - 32px));
+  max-height: calc(100% - 92px);
+  padding: 14px;
+  border: 1px solid rgba(137, 199, 230, 0.25);
+  border-radius: 8px;
+  color: #d9f3ff;
+  background: rgba(5, 16, 28, 0.9);
+}
+
+.multiplayer-panel p,
+.multiplayer-panel h2 {
+  margin: 0;
+}
+
+#connection-status {
+  color: #91dfff;
+  font:
+    11px/1.5 'DM Mono',
+    monospace;
+}
+
+.multiplayer-panel h2 {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+#room-roster,
+#chat-messages {
+  max-height: 100px;
+  margin: 0;
+  padding-left: 20px;
+  overflow: auto;
+  color: #a7bdcb;
+  font-size: 12px;
+}
+
+.chat-panel {
+  display: grid;
+  grid-template-rows: auto minmax(50px, 1fr) auto;
+  gap: 6px;
+  min-height: 0;
+}
+
+#chat-messages {
+  max-height: 140px;
+  overflow-wrap: anywhere;
+}
+
+#chat-form {
+  display: flex;
+  gap: 6px;
+}
+
+#chat-input {
+  min-width: 0;
+  flex: 1;
+  padding: 7px;
+  border: 1px solid rgba(171, 209, 229, 0.25);
+  border-radius: 5px;
+  color: #e6f4fb;
+  background: #102437;
+}
+
+#chat-form button {
+  border: 1px solid #4598b9;
+  border-radius: 5px;
+  color: #e6f4fb;
+  background: #12425a;
+  cursor: pointer;
+}
+
 #game {
   display: block;
   width: 100%;
@@ -490,6 +572,14 @@ kbd {
     height: 67vh;
     min-height: 340px;
     margin-top: 14px;
+  }
+
+  .multiplayer-panel {
+    top: 60px;
+    right: 10px;
+    width: min(240px, calc(100% - 20px));
+    max-height: calc(100% - 72px);
+    padding: 10px;
   }
 
   .flight-label {

@@ -1,6 +1,6 @@
-# Dogfight — JavaScript Game Labs 01–03
+# Dogfight — JavaScript Game Labs 01–04
 
-A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 adds cancellable asynchronous asset loading, a local HTTP lobby, sprite sheets, and Web Audio without replacing the existing simulation.
+A continuing space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 added cancellable asynchronous asset loading and Web Audio; Lab 04 adds a Node.js HTTP/WebSocket server and streamed match replays while keeping Labs 01–03 in the same game.
 
 ## Run it
 
@@ -11,12 +11,14 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite, usually `http://localhost:5173/`. To make a production build and serve that build locally:
+Open the local URL printed by Vite, usually `http://localhost:5173/`. To make a production build and serve the full game, API, and WebSocket endpoint from Node:
 
 ```powershell
 npm run build
-npm run preview
+npm start
 ```
+
+The production server listens on `http://127.0.0.1:3000` by default. Configuration is read from `.env` if present (see the Lab 04 section); do not commit secrets or local settings.
 
 Run the quality checks from the project folder:
 
@@ -43,61 +45,43 @@ The ship has acceleration, drag, a speed limit, a hull meter, and a small animat
 ## Project map and architecture
 
 ```text
-index.html
 package.json
+package-lock.json
 .nvmrc
 eslint.config.js
 .prettierrc.json
 README.md
-src/
-  main.js             # Loading → lobby → game bootstrap and Lab 01 experiments
-  assets/
-    loader.js         # Abortable fetch, retry/backoff, concurrent progress-aware loading
-  audio.js            # Web Audio context, decoded effect playback, event subscriptions
-  events.js           # Small EventTarget/CustomEvent bridge injected into simulation
-  hud.js              # DOM status updates driven by game events
-  lobby.js            # HTTP room data, validation, refresh lifecycle, join event
-  loop.js             # Fixed-step accumulator, optional comparison modes, timing metrics
-  input.js            # Closure-backed keyboard state and just-pressed edges
-  sim/
-    vector.js         # Immutable vector operations with explicit in-place variants
-    entity.js         # Shared identity and base entity behavior
-    ship.js           # Ship extends Entity; private health and firing
-    bullet.js         # Timed projectiles
-    asteroid.js       # Drifting, bouncing, damageable obstacles
-    pickup.js         # Stationary collidable effects
-    explosion.js      # Short-lived particles
-    homing.js         # Composable target-following behavior
-    collision.js      # Circle-pair detection and collision resolution
-    world.js          # Map store, iterable queries, deferred sweep
-    game.js           # Game session, score, setup, and timed respawn
-    arena.js          # Lab 01 pure wrap-around helper
-  render/
-    canvas.js         # Canvas 2D setup, resize observation, device-pixel ratio
-    draw.js           # Loading screen, sprite/fallback rendering, effects, and HUD
-    lobby-ui.js       # DOM room list that subscribes to Lobby events
-tests/
-  audio.test.js
-  entities.test.js
-  game.test.js
-  input.test.js
-  loader.test.js
-  lobby.test.js
-  loop.test.js
-  render.test.js
-  sim.test.js
-public/
-  api/rooms.json
-  assets/manifest.json
-  assets/arena.json
-  assets/sprites.svg
-  assets/*.wav
-vite.config.js        # Development-only slow/corrupt/404 failure-test endpoints
+scripts/
+  dev.js                    # Starts/stops the HTTP server and Vite together
+client/
+  package.json
+  index.html
+  vite.config.js            # Proxies /api and /ws to the Node server
+  src/                      # Game, assets, simulation, rendering, lobby, and audio
+  tests/                    # Client tests, including the Labs 01–03 regressions
+  public/assets/            # Manifest, arena, sprite sheet, and sound effects
+server/
+  package.json
+  src/
+    index.js                # HTTP + WebSocket app composition and graceful shutdown
+    config.js               # Validated environment configuration
+    http.js                 # Static files, room API, health, and streaming replay routes
+    protocol.js             # Versioned JSON protocol validation
+    rooms.js                # EventEmitter Room and Map-backed RoomManager
+    ws.js                   # Join/chat lifecycle, heartbeat, rate/slow-client handling
+    log/
+      matchlog.js           # Object-mode Transform and bounded NDJSON pipeline
+      replay.js             # Safe replay IDs and incremental NDJSON parsing
+      backpressure-experiment.js
+      unsafe-backpressure-demo.js  # Explicitly capped teaching-only example
+  test/                     # node:test coverage for HTTP, WebSocket, and streams
+evidence/
+  lab04-rss-samples.csv     # Raw 188-point RSS record from the documented run
 ```
 
-`src/sim/` does not import the DOM, canvas, audio, or HUD modules. It publishes game notifications only through an injected `emit(type, detail)` function; `main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
+`client/src/sim/` does not import the DOM, canvas, audio, or HUD modules. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures a small previous-state snapshot before each fixed simulation step; rendering blends those snapshots with the loop's interpolation alpha. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 
-`createInput(target)` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances.
+`createInput(target)` in `client/src/input.js` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances. The browser package and the Node server are separate npm workspaces: the development launcher runs both, while the production Node process serves `client/dist` together with the HTTP and WebSocket APIs.
 
 ## Event loop, in beginner-friendly terms
 
@@ -724,3 +708,197 @@ The table distinguishes automated evidence from actions that still need a real u
 - [x] Final tests, lint, formatting check, and production build pass; create the Lab 03 commit and `lab-03` tag locally. No push is performed.
 
 The optional Lab 03 stretch—byte-level stream progress, priority async-generator loading, and hand-written `Promise.all`/`allSettled`—is not implemented; it is not part of the required definition of done.
+
+---
+
+## Lab 04 — Node.js: The Other Runtime — Events, Streams, and WebSockets
+
+Lab 04 adds a real Node.js server to this same game. The existing browser client remains in `client/`; the `server/` workspace owns HTTP, rooms, WebSockets, and replay logs. This milestone intentionally shares room membership and chat only: authoritative game state and snapshots are Lab 05 work.
+
+### Start, configure, and check the server
+
+Use the Node version from `.nvmrc` (Node 22 or later) and npm:
+
+```powershell
+npm install
+npm run dev
+```
+
+The development launcher starts both the Node server (`http://127.0.0.1:3000`) and Vite (usually `http://localhost:5173`). Open the Vite URL. Vite proxies `/api` and `/ws` to Node. For the production path:
+
+```powershell
+npm run build
+npm start
+```
+
+Open `http://127.0.0.1:3000`; Node now serves `client/dist`, the room API, and WebSocket upgrade endpoint. Useful endpoint checks:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/health
+Invoke-RestMethod http://127.0.0.1:3000/api/rooms
+```
+
+Optional `.env` values are read by Node's `--env-file-if-exists` flag. For example:
+
+```text
+HOST=127.0.0.1
+PORT=3000
+LOG_DIR=server/logs
+MAX_ROOMS=50
+MAX_PLAYERS_PER_ROOM=8
+MAX_PAYLOAD_BYTES=16384
+MESSAGE_RATE_PER_SECOND=20
+SLOW_CLIENT_BYTES=262144
+HEARTBEAT_INTERVAL_MS=15000
+MAX_MISSED_HEARTBEATS=2
+```
+
+All values are validated at startup and have safe defaults. `.env`, `node_modules/`, built output, and server logs are git-ignored. `Ctrl+C` sends the graceful shutdown path; the server stops accepting connections, closes WebSockets, and flushes match logs.
+
+Root commands:
+
+| Command                                                         | Purpose                                                                                         |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `npm run dev`                                                   | Run the Node server and Vite together                                                           |
+| `npm start`                                                     | Serve the built client and API from Node                                                        |
+| `npm run build`                                                 | Create the client production bundle                                                             |
+| `npm test`                                                      | Run client and server test suites                                                               |
+| `npm run lint`                                                  | ESLint for both workspaces                                                                      |
+| `npm run format:check`                                          | Prettier check for tracked project files                                                        |
+| `npm run experiment:backpressure -- --size-mb=200 --delay-ms=4` | Generate a bounded replay, stream it to a deliberately slow reader, and save actual RSS samples |
+| `npm run experiment:unsafe-backpressure -- --size-mb=8`         | Run the intentionally flawed producer with a strict 8 MiB cap; do not remove or raise the cap   |
+
+### Architecture and request flow
+
+`server/src/index.js` composes the HTTP server, `RoomManager`, WebSocket handler, and `MatchLogManager`. The HTTP layer serves built files with MIME types and path confinement, `/health`, `GET/POST /api/rooms`, and `GET /api/replays/:id`. Request bodies, room counts, players, replay names, and WebSocket frames are bounded and validated. `server/src/config.js` reads and validates environment values. `server/src/rooms.js` contains `Room extends EventEmitter` and the `Map`-backed room manager; room events drive roster/chat broadcasts and replay logging.
+
+The WebSocket connection starts with an HTTP `Upgrade` handshake at `/ws`, then stays open for bidirectional messages. A client sends version 0 JSON `join` and `chat` messages; the server returns `joined`, `roster`, `chat`, or `error` messages. The server validates each incoming message instead of trusting the browser. It also enforces a join deadline, token-bucket rate limit, frame-size cap, ping/pong heartbeat, and a slow-client policy: chat is non-critical and may be dropped, while an undeliverable critical roster closes the client with code `1013`. The browser wrapper queues sends while connecting and reconnects with capped exponential backoff; intentional leave does not reconnect.
+
+The in-game lobby now loads real server rooms and shows the selected room's live roster and chat. To verify the required two-client behavior manually:
+
+1. Start `npm run dev`, then open the printed Vite URL in two separate browser windows or profiles.
+2. In each window, enter a different name and join the same room.
+3. Confirm each roster shows both names. Send chat from each window and confirm both receive it.
+4. Close one window and confirm the remaining roster drops to one. Rejoin the same room while the first player is still there; after the last player leaves, the empty room is intentionally removed.
+5. In a separate terminal, check `GET /health` and `GET /api/rooms`; verify that an empty room disappears and another seeded room remains available.
+
+### Node event loop, errors, and backpressure
+
+Node uses V8 for JavaScript and libuv for asynchronous I/O. Your JavaScript handlers still run one at a time on the main thread. The event loop cycles through **timers**, **pending callbacks**, **poll** (I/O), **check** (`setImmediate`), and **close callbacks**. Node drains `process.nextTick` and promise microtasks between phases; `process.nextTick` is drained before promise reactions and can starve I/O if code continually queues more of it. From the main module the relative order of `setTimeout(fn, 0)` and `setImmediate(fn)` is not guaranteed; inside an I/O callback, `setImmediate` runs in the check phase after poll. File I/O and some DNS work can use libuv's thread pool; your JavaScript callback itself is not moved there.
+
+The development-only `GET /api/slow` route deliberately busy-waits for about 300 ms. Run it while sending chat from another window: the server cannot process the chat during the synchronous loop, so every connection briefly waits. This route is disabled outside development. The actual probe below used a separate Node WebSocket client, started the slow request, and sent chat 50 ms later:
+
+| Run                           | Other activity                      |      Measured `/api/slow` duration | Chat delay observed    | Environment            |
+| ----------------------------- | ----------------------------------- | ---------------------------------: | ---------------------- | ---------------------- |
+| Separate Node WebSocket probe | Chat sent 50 ms after request began | 300 ms reported (329 ms wall time) | 246 ms chat round-trip | Node v22.14.0, Windows |
+
+An unhandled EventEmitter `"error"` is special: Node throws it and normally terminates the process. A rejected promise with no handler is also surfaced by Node and, under its default policy, terminates the process. Compare these:
+
+```js
+import { EventEmitter } from 'node:events';
+
+const broken = new EventEmitter();
+broken.emit('error', new Error('disk failed')); // Unhandled 'error' event; process exits non-zero.
+
+const handled = new EventEmitter();
+handled.on('error', (error) => console.error('Reported safely:', error.message));
+handled.emit('error', new Error('disk failed'));
+```
+
+The first line that emits `"error"` without a listener throws the error (Node reports an unhandled `"error"` event and a stack); the second emitter logs the problem and continues. Similarly, attach `.catch(...)` or use `try/catch` around `await` instead of leaving a rejection unhandled. The server installs error listeners on rooms, room management, the HTTP/WebSocket server, each socket, and stream pipelines.
+
+A stream moves data in chunks rather than building the entire file in memory. **Readable** produces chunks; **Writable** consumes them; **Duplex** does both (a TCP socket); **Transform** is both and changes each chunk (the replay encoder). A writable's `write(chunk)` returning `false` means its internal queue reached the high-water mark: stop producing until `drain`. Ignoring that signal lets a fast producer accumulate an unbounded queue behind a slow disk or network client. `pipeline()` propagates backpressure, errors, and teardown between stages.
+
+Each room emits small event objects to an object-mode `PassThrough`; an object-mode `Transform` serializes each event to one NDJSON line, and `pipeline()` writes it to a log file. The replay route pipes the file stream directly into the HTTP response, so a slow download applies pressure back through the pipeline. `npm run experiment:backpressure -- --size-mb=200 --delay-ms=4` produces a 200 MiB synthetic replay (hard capped at 200 MiB), downloads it through a delayed local consumer, and writes `elapsed_ms,rss_bytes` samples to a CSV in `LOG_DIR`. To graph it, import that CSV into a spreadsheet and plot RSS against elapsed time. The actual run below is from this workspace:
+
+|          Replay bytes |               Slow-reader delay | Samples / duration    | RSS minimum–maximum | Start / end RSS   | Environment            |
+| --------------------: | ------------------------------: | --------------------- | ------------------- | ----------------- | ---------------------- |
+| 209,715,200 (200 MiB) | 4 ms per 64 KiB slow-sink write | 188 samples / 47.14 s | 47.82–85.91 MiB     | 55.43 → 65.29 MiB | Node v22.14.0, Windows |
+
+The measured RSS was not perfectly flat: allocator and runtime activity caused it to vary by about 38.09 MiB, but it remained below the 200 MiB payload size instead of growing by the full payload size. These are measurements from this one local run, not a guarantee for other machines or network conditions. The complete 188-point CSV is preserved in [evidence/lab04-rss-samples.csv](./evidence/lab04-rss-samples.csv).
+
+Measured points (elapsed seconds, RSS MiB) from that CSV:
+
+```mermaid
+xychart-beta
+    x-axis "Elapsed seconds" [0, 5.1, 9.9, 15, 20.1, 25.1, 29.9, 35, 40, 45.1, 47.1]
+    y-axis "RSS MiB" 40 --> 90
+    line [55.43, 56.73, 60.61, 52.80, 67.25, 56.03, 59.42, 64.86, 70.32, 72.63, 65.29]
+```
+
+For comparison, `npm run experiment:unsafe-backpressure -- --size-mb=8` demonstrates a producer that ignores `write()`'s return value. It is intentionally limited to 8 MiB and exists only to show queue growth; it is not an unlimited crash experiment. An actual 2 MiB run reported 8,388,608 bytes written, RSS 42,303,488 bytes before and 51,064,832 bytes after; the result is machine-dependent.
+
+### Five Node terminal experiments
+
+Run these from the repository root with Node 22. For the REPL experiments, enter `node` and paste the JavaScript, or run the provided `node -e` command in PowerShell.
+
+1. **Event loop ordering.**
+
+   ```powershell
+   node -e "setTimeout(()=>console.log('timer'),0); setImmediate(()=>console.log('immediate')); process.nextTick(()=>console.log('nextTick')); Promise.resolve().then(()=>console.log('promise'));"
+   ```
+
+   `nextTick` appears before promise reactions, and both run before timer/check callbacks. The ordering between timer and immediate can vary when scheduled from the main module. Repeat several times; do not treat one run's order as a universal guarantee. One actual run in this workspace on Node v22.14.0 printed `nextTick`, `promise`, `timer`, `immediate`.
+
+2. **Unhandled EventEmitter errors.** Run `node --input-type=module -e "import { EventEmitter } from 'node:events'; new EventEmitter().emit('error', new Error('boom'))"` and observe that the child process exits non-zero. Then attach `emitter.on('error', error => console.error(error.message))` before emitting; the error is handled instead of escaping. Actual Node v22.14.0 run: the unhandled example printed `Error: boom` and `Emitted 'error' event at:`, then exited with code `1`; the handled example printed `handled: boom` and exited normally.
+
+3. **Stream backpressure.** First run the safe bounded measurement:
+
+   ```powershell
+   npm run experiment:backpressure -- --size-mb=10 --delay-ms=1
+   ```
+
+   It prints transferred bytes and the real CSV path. Then compare the intentionally unsafe, strictly capped producer:
+
+   ```powershell
+   npm run experiment:unsafe-backpressure -- --size-mb=2
+   ```
+
+   Compare `rssBeforeBytes`/`rssAfterBytes` and the bounded cap. Memory values depend on Node, OS, and allocator; the safe experiment's graph is evidence, not a promise of perfectly constant RSS.
+
+4. **Bytes versus characters.** Run `node -e "console.log(Buffer.from('привіт').length, 'привіт'.length); console.log(Buffer.from([0xff, 0x00]).readUInt16BE(0))"`. Actual Node v22.14.0 output was `12 6` and `65280`: UTF-8 bytes and JavaScript UTF-16 code units are different counts, and the two-byte integer is big-endian.
+
+5. **WebSocket echo and payload cap.** An echo test uses `new WebSocketServer({ port: 0 })`, accepts one client, listens for `"message"`, and sends the same data back; the browser's built-in `WebSocket` can be used as the client. Then run the game server with `MAX_PAYLOAD_BYTES=1024`, send a 2 KiB frame with a `ws` client, and observe a `1009` close (message too big). For the game protocol, a valid join is required before chat; the normal server is not an echo server. The local `ws` experiment actually returned `echo works`; sending a 2 KiB frame to a `maxPayload: 1024` test server closed it with code `1009`.
+
+### Lab 04 verification and evidence
+
+Automated tests cover the versioned message protocol, room events and limits, HTTP API and static traversal protection, join timeout, client cleanup, roster/chat broadcasts, streaming replay contents, the slow-client drop/close policy, missed heartbeats, pipeline error propagation/backpressure, bounded experiments, and the Lab 01–03 client regressions. A local integrated-browser run used two independent pages: both joined the same room, each received the two-player roster and each other's chat, and leaving reduced the remaining roster to one. That run also exposed and fixed the post-join send-queue bug in `client/src/connection.js`. Use:
+
+```powershell
+npm test
+npm run lint
+npm run format:check
+npm run build
+```
+
+The `npm test` suite is reproducible and does not require external network access. The two-page browser check, five Node experiments, capped unsafe comparison, blocking-route/chat probe, and 200 MiB RSS experiment have been run; no screenshot was saved. If the instructor requires visual evidence, capture both browser windows with names/chat visible, the lobby after one player leaves, and the RSS graph with its CSV and test conditions.
+
+#### Lab 04 reflection answers
+
+1. **Event-loop phases.** The broad phases are timers, pending callbacks, poll, check, and close callbacks. Timers run eligible `setTimeout`/`setInterval` callbacks; poll handles I/O; check handles `setImmediate`; `process.nextTick` and promise reactions are microtask-like queues drained between phases, with `nextTick` first. Main-module `setTimeout(0)` versus `setImmediate` ordering is not fixed because it depends on when the loop begins and reaches phases.
+2. **Non-blocking file I/O.** Node submits filesystem work to the operating system/libuv and resumes JavaScript with a callback or promise when it completes. libuv's thread pool also handles selected DNS and crypto work. It does not execute an ordinary JavaScript request handler in parallel; CPU-bound JavaScript still blocks the main event loop.
+3. **CommonJS and ESM.** CommonJS uses `require` and `module.exports`, is historically synchronous, and uses its own wrapper scope. ESM uses static `import`/`export`, has strict module scope, and supports asynchronous module loading. In ESM, `import.meta.dirname` (or `fileURLToPath(import.meta.url)` for a portable fallback) replaces CommonJS's `__dirname`.
+4. **Backpressure.** A writable returning `false` has reached its high-water mark; producing more anyway grows its queue and memory use. Wait for `drain`, or connect stages with `pipeline()`, which coordinates flow, backpressure, errors, and cleanup.
+5. **Stream kinds.** Readable emits data; Writable accepts data; Duplex is readable and writable (a TCP socket); Transform is a Duplex that transforms data as it passes. A file read stream is Readable, a file write stream is Writable, and the NDJSON serializer is Transform.
+6. **WebSocket handshake and choice.** A client begins with HTTP and requests an upgrade; the server accepts the upgrade and both sides then exchange frames on one persistent full-duplex connection. That allows low-overhead server push and client input without polling; SSE is server-to-client only, while polling repeatedly opens requests and adds delay/overhead.
+7. **Error handling.** Emitting `"error"` without a listener throws synchronously and normally crashes Node. An unhandled promise rejection is reported and normally terminates the process under Node's default policy. Attach an error listener and handle every promise rejection at the appropriate boundary.
+8. **A slow 2G client.** At 30 snapshots per second, data can arrive faster than that client consumes it, so `bufferedAmount` grows. Observe its size and process RSS; bound queues, drop replaceable/non-critical updates, reduce update frequency or payload, or close the client if it cannot keep up. Never buffer indefinitely.
+9. **Validate server input.** A browser client can be modified or replaced by an attacker, and network input can be malformed, oversized, stale, or hostile. Server-side schema, size, rate, and state validation protects every room and connection regardless of what the official client does.
+
+#### Lab 04 deliverable checklist
+
+- [x] npm workspaces for `client/` and `server/`, ESM packages, Node built-ins imported with `node:` prefixes.
+- [x] HTTP static serving with MIME/path checks, room GET/POST API, health endpoint, Vite API/WebSocket proxy.
+- [x] Validated environment configuration, `.env` loading, graceful SIGINT/SIGTERM shutdown.
+- [x] EventEmitter rooms, Map room manager, validated version-0 protocol, join deadline, roster and chat broadcasts.
+- [x] WebSocket heartbeat and socket error handlers; reconnect backoff and connecting-state send queue in the browser client.
+- [x] Object-mode Transform, NDJSON `pipeline`, incremental replay parser, streamed replay HTTP endpoint.
+- [x] Token bucket, payload/player/room caps, and slow-client drop/close policy.
+- [x] Automated tests for HTTP, room, WebSocket, stream, and earlier client behavior.
+- [x] Development-only 300 ms blocking endpoint and written Node event-loop/backpressure/error explanation.
+- [x] Verify two independent browser pages, bidirectional chat, roster updates, and cleanup in the integrated browser.
+- [x] Run the 200 MiB throttled replay experiment and add its measured RSS graph and conditions.
+- [x] Execute the five Node terminal experiments and measure chat delay during `/api/slow`.
+- [x] Create the Lab 04 commit and `lab-04` tag locally after final verification; do not push without permission.
+
+The optional gzip-compressed match logs, live SSE spectator, and Fastify port are Lab 04 stretch items and are not implemented. No manual result or RSS graph is fabricated.

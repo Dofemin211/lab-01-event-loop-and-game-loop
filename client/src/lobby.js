@@ -46,7 +46,7 @@ export class Lobby extends EventTarget {
   #active = false;
 
   constructor({
-    url = '/api/rooms.json',
+    url = '/api/rooms',
     fetchRooms = fetchJson,
     timeoutMs = 3000,
     refreshMs = 5000,

@@ -2,7 +2,7 @@ import js from '@eslint/js';
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: ['**/dist/**', '**/node_modules/**'],
   },
   js.configs.recommended,
   {
@@ -14,6 +14,7 @@ export default [
         AbortController: 'readonly',
         AbortSignal: 'readonly',
         Blob: 'readonly',
+        Buffer: 'readonly',
         clearTimeout: 'readonly',
         CustomEvent: 'readonly',
         console: 'readonly',
@@ -40,6 +41,8 @@ export default [
         structuredClone: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
+        WebSocket: 'readonly',
+        WebSocketPair: 'readonly',
         window: 'readonly',
       },
     },

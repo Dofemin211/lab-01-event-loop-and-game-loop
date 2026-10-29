@@ -1,6 +1,7 @@
 import './style.css';
 import { createAudio } from './audio.js';
 import { loadAll, loadJson, withRetry } from './assets/loader.js';
+import { MultiplayerConnection } from './connection.js';
 import { createInput } from './input.js';
 import { createLoop } from './loop.js';
 import { createGameEventTarget, emitGameEvent } from './events.js';
@@ -33,12 +34,20 @@ const runFailureButton = document.querySelector('#run-failure-test');
 const lobbyRoot = document.querySelector('#lobby-screen');
 const gameControls = document.querySelector('#game-controls');
 const lobbyStatus = document.querySelector('#lobby-status');
+const multiplayerPanel = document.querySelector('#multiplayer-panel');
+const connectionStatus = document.querySelector('#connection-status');
+const rosterElement = document.querySelector('#room-roster');
+const chatMessages = document.querySelector('#chat-messages');
+const chatForm = document.querySelector('#chat-form');
+const chatInput = document.querySelector('#chat-input');
 
 const audio = createAudio(eventTarget);
 const lobby = new Lobby();
+const multiplayer = new MultiplayerConnection();
 let lobbyUI;
 let session = null;
 let roomConfiguration = null;
+let pendingRoomSelection = null;
 let assets = {};
 let arenaDefinition = { asteroidCount: 6, seed: 2025 };
 let previousStates = new Map();
@@ -256,9 +265,83 @@ function startGame(selection) {
   document.querySelector('.flight-label').hidden = false;
   document.querySelector('.coordinate-label').hidden = false;
   document.querySelector('#experiments').hidden = !experimentsEnabled;
+  multiplayerPanel.hidden = false;
   void audio.unlock();
   startLoop();
 }
+
+function renderRoster(message) {
+  rosterElement.replaceChildren();
+  for (const player of message.players ?? []) {
+    const item = document.createElement('li');
+    item.textContent = player.name;
+    rosterElement.append(item);
+  }
+}
+
+function renderChat(message) {
+  const item = document.createElement('li');
+  item.textContent = `${message.name}: ${message.text}`;
+  chatMessages.append(item);
+  while (chatMessages.childElementCount > 100) {
+    chatMessages.firstElementChild.remove();
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+multiplayer.addEventListener('state', (event) => {
+  const labels = {
+    disconnected: 'Disconnected from the room server.',
+    connecting: 'Connecting to the room…',
+    open: 'Connected; joining room…',
+    joined: 'Connected to the room.',
+    reconnecting: 'Connection lost. Reconnecting…',
+  };
+  connectionStatus.textContent = labels[event.detail.state] ?? 'Connection status unknown.';
+  if (!session && event.detail.state !== 'disconnected') {
+    lobbyStatus.textContent = labels[event.detail.state];
+  }
+});
+multiplayer.addEventListener('joined', (event) => {
+  if (!pendingRoomSelection) {
+    return;
+  }
+  const selection = {
+    room: event.detail.room,
+    playerName: pendingRoomSelection.playerName,
+  };
+  pendingRoomSelection = null;
+  emitGameEvent(eventTarget, 'roomJoined', selection);
+  startGame(selection);
+});
+multiplayer.addEventListener('roster', (event) => renderRoster(event.detail));
+multiplayer.addEventListener('chat', (event) => renderChat(event.detail.message));
+multiplayer.addEventListener('error', (event) => {
+  connectionStatus.textContent = event.detail.message;
+  if (!session) {
+    lobbyStatus.textContent = event.detail.message;
+    if (pendingRoomSelection) {
+      pendingRoomSelection = null;
+      multiplayer.disconnect();
+      lobbyUI?.show();
+    }
+  }
+});
+
+chatForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) {
+    return;
+  }
+  try {
+    if (multiplayer.sendChat(text)) {
+      chatInput.value = '';
+    }
+  } catch (error) {
+    connectionStatus.textContent = error.message;
+  }
+});
 
 function readExperimentSettings() {
   return {
@@ -444,8 +527,9 @@ function connectLobby() {
     },
     {
       onJoin: (selection) => {
-        emitGameEvent(eventTarget, 'roomJoined', selection);
-        startGame(selection);
+        pendingRoomSelection = selection;
+        void audio.unlock();
+        multiplayer.connect(selection.room.id, selection.playerName);
       },
     },
   );
@@ -494,6 +578,7 @@ window.addEventListener('resize', () => {
 const disconnectHudOnUnload = () => {
   gameLoop?.stop();
   lobbyUI?.dispose();
+  multiplayer.disconnect();
   audio.dispose();
   disconnectHud();
 };
