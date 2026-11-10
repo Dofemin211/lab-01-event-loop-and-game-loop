@@ -56,6 +56,7 @@ interface MatchPlayerState {
   ship: Ship | null;
   command: MatchCommand;
   readonly queued: MatchCommand[];
+  readonly botIndex: number | null;
   lastQueuedSeq: number;
   lastProcessedSeq: number;
   respawnTicks: number;
@@ -69,6 +70,11 @@ export interface MatchStats {
   readonly players: number;
   readonly lastTickDurationMs: number;
   readonly averageTickDurationMs: number;
+  readonly tickDurationPercentilesMs: {
+    readonly p50: number;
+    readonly p95: number;
+    readonly p99: number;
+  };
   readonly lastJitterMs: number;
   readonly averageJitterMs: number;
   readonly worldEntities: number;
@@ -92,6 +98,7 @@ export class Match extends EventEmitter<MatchEvents> {
   nextTickAt = 0;
   lastTickDurationMs = 0;
   lastJitterMs = 0;
+  #nextBotIndex = 1;
 
   constructor(
     room: Room,
@@ -147,18 +154,48 @@ export class Match extends EventEmitter<MatchEvents> {
     const ship = this.world.spawn(
       new Ship(position.x, position.y, { playerId: player.id, invulnerableTime: 1.5 }),
     );
+    const botMatch = /^bot-(\d+)$/.exec(player.id);
     player.entityId = ship.id;
     this.players.set(player.id, {
       player,
       ship,
       command: EMPTY_COMMAND,
       queued: [],
+      botIndex: botMatch?.[1] ? Number(botMatch[1]) : null,
       lastQueuedSeq: 0,
       lastProcessedSeq: 0,
       respawnTicks: 0,
       entityId: ship.id,
     });
     this.start();
+  }
+
+  addBots(count: number): readonly RoomPlayer[] {
+    if (!Number.isInteger(count) || count < 1 || count > 8) {
+      throw new RangeError('Bot count must be an integer between 1 and 8.');
+    }
+    if (count > this.room.maxPlayers - this.room.players.size) {
+      throw new RangeError('The room does not have enough available player slots.');
+    }
+    const added: RoomPlayer[] = [];
+    for (let index = 0; index < count; index += 1) {
+      while (this.room.players.has(`bot-${this.#nextBotIndex}`)) {
+        this.#nextBotIndex += 1;
+      }
+      const botIndex = this.#nextBotIndex;
+      this.#nextBotIndex += 1;
+      added.push(this.room.join({ id: `bot-${botIndex}`, name: `AI Pilot ${botIndex}` }));
+    }
+    return added;
+  }
+
+  removeBots(): readonly RoomPlayer[] {
+    const removed: RoomPlayer[] = [];
+    for (const player of this.room.players.values()) {
+      if (/^bot-\d+$/.test(player.id)) removed.push(player);
+    }
+    for (const player of removed) this.room.leave(player.id);
+    return removed;
   }
 
   #removePlayer(player: RoomPlayer): void {
@@ -220,6 +257,19 @@ export class Match extends EventEmitter<MatchEvents> {
     this.lastJitterMs = startedAt - this.nextTickAt;
     const inputs = new Map<string, InputReader>();
     for (const [playerId, state] of this.players) {
+      if (state.botIndex !== null) {
+        const phase = (this.tick + state.botIndex * 23) % 120;
+        const sequence = state.lastProcessedSeq + 1;
+        state.command = {
+          seq: sequence,
+          tick: this.tick,
+          turn: phase < 60 ? 1 : -1,
+          thrust: phase % 90 < 60,
+          brake: false,
+          fire: phase % 15 < 2,
+        };
+        state.lastProcessedSeq = sequence;
+      }
       if (state.queued.length > 0) {
         for (const command of state.queued) {
           state.command = command;
@@ -303,6 +353,11 @@ export class Match extends EventEmitter<MatchEvents> {
   stats(): MatchStats {
     const average = (values: readonly number[]): number =>
       values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
+    const sortedDurations = [...this.durations].sort((a, b) => a - b);
+    const percentile = (fraction: number): number =>
+      sortedDurations.length
+        ? (sortedDurations[Math.max(0, Math.ceil(sortedDurations.length * fraction) - 1)] ?? 0)
+        : 0;
     return {
       roomId: this.room.id,
       tickRate: TICK_RATE,
@@ -310,6 +365,11 @@ export class Match extends EventEmitter<MatchEvents> {
       players: this.players.size,
       lastTickDurationMs: this.lastTickDurationMs,
       averageTickDurationMs: average(this.durations),
+      tickDurationPercentilesMs: {
+        p50: percentile(0.5),
+        p95: percentile(0.95),
+        p99: percentile(0.99),
+      },
       lastJitterMs: this.lastJitterMs,
       averageJitterMs: average(this.jitters),
       worldEntities: this.world.size,

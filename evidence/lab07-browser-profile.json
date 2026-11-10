@@ -1,0 +1,62 @@
+{
+  "measuredAt": "2026-11-10T13:08:50.679Z",
+  "durationSeconds": 30,
+  "browser": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.8127.18 Safari/537.36",
+    "devicePixelRatio": 1
+  },
+  "workload": {
+    "humanPlayers": 1,
+    "authoritativeBots": 8,
+    "asteroids": 30,
+    "humanHolding": ["W", "F"]
+  },
+  "frames": {
+    "samples": 1799,
+    "intervalMs": {
+      "p50": 16.7,
+      "p95": 16.7,
+      "p99": 16.8
+    },
+    "callbackDurationMs": {
+      "p50": 0.7,
+      "p95": 1.2,
+      "p99": 1.5
+    }
+  },
+  "stages": {
+    "simulate": {
+      "p50": 0.1,
+      "p95": 0.2,
+      "p99": 0.3
+    },
+    "render": {
+      "p50": 0.5,
+      "p95": 0.9,
+      "p99": 1.1
+    },
+    "decode": {
+      "p50": 0.1,
+      "p95": 0.3,
+      "p99": 0.4
+    },
+    "reconcile": {
+      "p50": 0,
+      "p95": 0,
+      "p99": 0.1
+    }
+  },
+  "longTasks": {
+    "count": 0,
+    "totalDurationMs": 0
+  },
+  "browserGc": {
+    "supported": false,
+    "count": 0,
+    "totalDurationMs": 0
+  },
+  "limitations": [
+    "Chromium runs headless; frame intervals are the browser-reported requestAnimationFrame cadence, not display scan-out measurements.",
+    "Long-task observer reports main-thread tasks of at least 50 ms; browser allocation sites and a DevTools heap snapshot are not collected."
+  ]
+}

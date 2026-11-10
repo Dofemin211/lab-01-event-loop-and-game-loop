@@ -1,3 +1,5 @@
+import { measureStage } from './performance.ts';
+
 const MAX_FRAME_DELTA = 0.25;
 const METRICS_INTERVAL_MS = 1000;
 const INTERVAL_DELAY_MS = 16;
@@ -130,7 +132,7 @@ export function createLoop({
 
     if (variableTimestep) {
       if (frameDelta > 0) {
-        simulate(frameDelta);
+        measureStage('simulate', () => simulate(frameDelta));
         totalSteps += 1;
         windowSteps += 1;
       }
@@ -139,7 +141,7 @@ export function createLoop({
       // The clamp prevents a long pause from demanding an unbounded catch-up burst.
       accumulator += frameDelta;
       while (accumulator >= step) {
-        simulate(step);
+        measureStage('simulate', () => simulate(step));
         accumulator -= step;
         totalSteps += 1;
         windowSteps += 1;
@@ -148,7 +150,7 @@ export function createLoop({
 
     totalFrames += 1;
     windowFrames += 1;
-    render(variableTimestep ? 0 : accumulator / step, getMetrics());
+    measureStage('render', () => render(variableTimestep ? 0 : accumulator / step, getMetrics()));
     const frameDuration = Math.max(0, clock() - frameStartedAt);
     updateMetrics(timestamp, frameDuration);
 

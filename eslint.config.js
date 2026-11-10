@@ -1,10 +1,24 @@
 import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 
 export default [
   {
     ignores: ['**/dist/**', '**/node_modules/**'],
   },
   js.configs.recommended,
+  ...tseslint.configs.recommended.map((config) => ({
+    ...config,
+    files: ['**/*.ts'],
+  })),
+  {
+    files: ['**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+    },
+  },
   {
     files: ['**/*.js'],
     languageOptions: {

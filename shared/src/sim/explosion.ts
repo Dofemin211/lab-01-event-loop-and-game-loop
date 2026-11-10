@@ -1,7 +1,7 @@
 import { Entity } from './entity.ts';
 import { Vector2 } from './vector.ts';
 import { mulberry32 } from '../prng.ts';
-import type { EntityId, ExplosionParticleSnapshot, ExplosionSnapshot } from '../types.ts';
+import type { EntityId, ExplosionSnapshot } from '../types.ts';
 
 export interface ExplosionParticle {
   pos: Vector2;

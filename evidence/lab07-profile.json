@@ -1,0 +1,155 @@
+{
+  "measuredAt": "2026-11-10T12:55:21.204Z",
+  "durationSeconds": 20.09,
+  "codec": "binary",
+  "clients": {
+    "target": 8,
+    "joined": 8,
+    "serverErrors": 0
+  },
+  "trafficBytesPerSecond": {
+    "serverIncoming": 2902,
+    "serverOutgoing": 463074
+  },
+  "processCpuPercentOfOneCore": 10.89,
+  "eventLoopUtilization": 0.1096,
+  "memoryBytes": {
+    "rss": 111038464,
+    "heapTotal": 56750080,
+    "heapUsed": 17643728,
+    "external": 5843349,
+    "arrayBuffers": 90690
+  },
+  "gc": {
+    "count": 11,
+    "totalDurationMs": 26
+  },
+  "cpuProfile": [
+    {
+      "function": "(idle)",
+      "sampleMs": 18292.73
+    },
+    {
+      "function": "(program)",
+      "sampleMs": 371.63
+    },
+    {
+      "function": "decode",
+      "sampleMs": 192.49
+    },
+    {
+      "function": "writev",
+      "sampleMs": 151.45
+    },
+    {
+      "function": "(anonymous)",
+      "sampleMs": 105.89
+    },
+    {
+      "function": "inst._zod.parse",
+      "sampleMs": 59.71
+    },
+    {
+      "function": "(garbage collector)",
+      "sampleMs": 48.54
+    },
+    {
+      "function": "writeBuffer",
+      "sampleMs": 47.18
+    },
+    {
+      "function": "runChecks",
+      "sampleMs": 45.68
+    },
+    {
+      "function": "post",
+      "sampleMs": 42.09
+    },
+    {
+      "function": "processTimers",
+      "sampleMs": 39.36
+    },
+    {
+      "function": "createNetworkEntity",
+      "sampleMs": 38.25
+    },
+    {
+      "function": "encodeSnapshot",
+      "sampleMs": 34.45
+    },
+    {
+      "function": "nextTick",
+      "sampleMs": 29.43
+    },
+    {
+      "function": "parseSnapshotEntity",
+      "sampleMs": 28.27
+    }
+  ],
+  "sampledAllocations": [
+    {
+      "function": "processTimers",
+      "sampledBytes": 527632
+    },
+    {
+      "function": "#onMessage",
+      "sampledBytes": 445072
+    },
+    {
+      "function": "(anonymous)",
+      "sampledBytes": 268952
+    },
+    {
+      "function": "inst._zod.parse",
+      "sampledBytes": 77120
+    },
+    {
+      "function": "exec",
+      "sampledBytes": 33536
+    },
+    {
+      "function": "update",
+      "sampledBytes": 31032
+    },
+    {
+      "function": "ReadableState",
+      "sampledBytes": 22512
+    },
+    {
+      "function": "_addListener",
+      "sampledBytes": 21128
+    },
+    {
+      "function": "test",
+      "sampledBytes": 21040
+    },
+    {
+      "function": "ClientRequest",
+      "sampledBytes": 20576
+    },
+    {
+      "function": "encodeSnapshot",
+      "sampledBytes": 19616
+    },
+    {
+      "function": "emit",
+      "sampledBytes": 19144
+    },
+    {
+      "function": "get",
+      "sampledBytes": 18816
+    },
+    {
+      "function": "getHashCache",
+      "sampledBytes": 17632
+    },
+    {
+      "function": "encodeBinary",
+      "sampledBytes": 17568
+    }
+  ],
+  "limitations": [
+    "Node server and scripted WebSocket load clients share one process; CPU and heap data include harness work.",
+    "Inspector CPU and heap sampling add profiler overhead; CPU sample time is an estimate, not wall-clock attribution."
+  ]
+}

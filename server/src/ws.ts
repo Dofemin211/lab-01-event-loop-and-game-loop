@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { WebSocket, type RawData, type WebSocketServer } from 'ws';
+import { WebSocket, type RawData } from 'ws';
 import { encodeBinary } from '@dogfight/shared/codec';
 import { Match, type MatchSnapshot } from './match.ts';
 import { parseClientMessage, ProtocolError, serverMessage } from './protocol.ts';
 import type { ServerConfig } from './config.ts';
 import type { Room, RoomManager, RoomPlayer, ChatRecord } from './rooms.ts';
+import { TokenBucket } from './token-bucket.ts';
 
 type Logger = Pick<Console, 'error'>;
 type OutgoingData = string | Buffer | ArrayBuffer;
@@ -33,8 +34,7 @@ interface SocketState {
   alive: boolean;
   missedHeartbeats: number;
   droppedMessages: number;
-  tokens: number;
-  lastTokenUpdate: number;
+  readonly rateLimiter: TokenBucket;
   readonly joinTimer: NodeJS.Timeout;
 }
 
@@ -110,7 +110,7 @@ function attachRoomBroadcasts(
   };
   const onError = (error: Error): void => logError(logger, `Room ${room.id} failed:`, error);
   const onSnapshot = (snapshot: MatchSnapshot): void => {
-    const jsonSnapshot = serverMessage('snapshot', snapshot);
+    let jsonSnapshot: string | undefined;
     let binarySnapshot: Buffer | undefined;
     for (const socket of wss.clients) {
       const state = states.get(socket);
@@ -119,6 +119,7 @@ function attachRoomBroadcasts(
         binarySnapshot ??= Buffer.from(encodeBinary(snapshot));
         send(socket, state, binarySnapshot, { critical: false });
       } else {
+        jsonSnapshot ??= serverMessage('snapshot', snapshot);
         send(socket, state, jsonSnapshot, { critical: false });
       }
     }
@@ -167,8 +168,7 @@ export function installWebSocketHandlers(
       alive: true,
       missedHeartbeats: 0,
       droppedMessages: 0,
-      tokens: config.messageRatePerSecond,
-      lastTokenUpdate: Date.now(),
+      rateLimiter: new TokenBucket(config.messageRatePerSecond),
       joinTimer: setTimeout(() => {
         send(
           socket,
@@ -361,16 +361,5 @@ export function installWebSocketHandlers(
 }
 
 function consumeToken(state: SocketState): boolean {
-  const now = Date.now();
-  const elapsed = (now - state.lastTokenUpdate) / 1000;
-  state.tokens = Math.min(
-    state.config.messageRatePerSecond,
-    state.tokens + elapsed * state.config.messageRatePerSecond,
-  );
-  state.lastTokenUpdate = now;
-  if (state.tokens < 1) {
-    return false;
-  }
-  state.tokens -= 1;
-  return true;
+  return state.rateLimiter.consume();
 }

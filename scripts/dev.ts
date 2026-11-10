@@ -5,11 +5,15 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const viteEntrypoint = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
 const children = [
-  spawn(process.execPath, ['--env-file-if-exists=.env', '--watch', 'server/src/index.js'], {
-    cwd: root,
-    env: { ...process.env, NODE_ENV: 'development' },
-    stdio: 'inherit',
-  }),
+  spawn(
+    process.execPath,
+    ['--import', 'tsx', '--env-file-if-exists=.env', '--watch', 'server/src/index.ts'],
+    {
+      cwd: root,
+      env: { ...process.env, NODE_ENV: 'development' },
+      stdio: 'inherit',
+    },
+  ),
   spawn(process.execPath, [viteEntrypoint], {
     cwd: path.join(root, 'client'),
     env: { ...process.env, NODE_ENV: 'development' },
@@ -32,7 +36,7 @@ function stopChildren(exitCode = 0) {
   Promise.all(
     children.map(
       (child) =>
-        new Promise((resolve) => {
+        new Promise<void>((resolve) => {
           if (child.exitCode !== null || child.signalCode !== null) {
             resolve();
           } else {

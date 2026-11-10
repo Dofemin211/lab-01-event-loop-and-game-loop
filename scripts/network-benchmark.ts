@@ -55,7 +55,7 @@ const binaryInputBytes = encodeBinary(input).byteLength;
 const jsonPingBytes = Buffer.byteLength(encodeJson({ version: 0, ...ping }));
 const binaryPingBytes = encodeBinary(ping).byteLength;
 
-function measure(operation) {
+function measure(operation: () => void) {
   const started = performance.now();
   for (let index = 0; index < ITERATIONS; index += 1) operation();
   return ((performance.now() - started) * 1_000) / ITERATIONS;

@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  typecheck:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,3 +15,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      - run: npm run typecheck:tools
+      - run: npm run lint
+      - run: npm test
+      - run: npm run coverage
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e

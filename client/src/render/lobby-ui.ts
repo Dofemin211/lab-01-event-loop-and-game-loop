@@ -1,5 +1,5 @@
 import { parseRooms } from '../lobby.ts';
-import type { Lobby, LobbyRoom, RoomSelection } from '../lobby.ts';
+import type { Lobby, RoomSelection } from '../lobby.ts';
 
 interface LobbyElements {
   readonly root: HTMLElement;
@@ -8,18 +8,6 @@ interface LobbyElements {
   readonly joinButton: HTMLButtonElement;
   readonly refreshButton: HTMLButtonElement;
   readonly status: HTMLElement;
-}
-
-interface LobbyRoomsDetail {
-  readonly rooms: readonly LobbyRoom[];
-}
-
-interface LobbyErrorDetail {
-  readonly error: unknown;
-}
-
-interface LobbyStateDetail {
-  readonly state: string;
 }
 
 function customDetail(event: Event): unknown {

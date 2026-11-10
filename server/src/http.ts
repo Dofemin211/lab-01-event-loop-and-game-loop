@@ -2,9 +2,9 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { Socket } from 'node:net';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { performance } from 'node:perf_hooks';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import { z } from 'zod';
@@ -93,6 +93,10 @@ const roomRequestSchema = z.strictObject({
       .int()
       .default(() => Math.floor(Math.random() * 1_000_000)),
   }),
+});
+
+const botRequestSchema = z.strictObject({
+  count: z.number().int().min(1).max(8).default(1),
 });
 
 function validateCreateRoom(body: unknown): RoomConfig {
@@ -222,6 +226,9 @@ export function createHttpServer({
   matchManager,
   logger = console,
 }: HttpServerOptions): Server {
+  const processStartedAt = performance.now();
+  const cpuStartedAt = process.cpuUsage();
+  const eventLoopStartedAt = performance.eventLoopUtilization();
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -257,6 +264,32 @@ export function createHttpServer({
         sendJson(response, 200, matchManager.stats());
         return;
       }
+      if (url.pathname === '/api/performance') {
+        if (request.method !== 'GET') {
+          response.setHeader('Allow', 'GET');
+          throw new HttpError(405, 'Method not allowed.');
+        }
+        const elapsedMs = Math.max(0, performance.now() - processStartedAt);
+        const cpu = process.cpuUsage(cpuStartedAt);
+        const eventLoop = performance.eventLoopUtilization(eventLoopStartedAt);
+        const memory = process.memoryUsage();
+        sendJson(response, 200, {
+          elapsedMs,
+          cpuUserMs: cpu.user / 1000,
+          cpuSystemMs: cpu.system / 1000,
+          cpuPercentOfOneCore: ((cpu.user + cpu.system) / (elapsedMs * 1000)) * 100,
+          eventLoopActiveMs: eventLoop.active,
+          eventLoopIdleMs: eventLoop.idle,
+          eventLoopUtilization: eventLoop.utilization,
+          memoryBytes: {
+            rss: memory.rss,
+            heapUsed: memory.heapUsed,
+            heapTotal: memory.heapTotal,
+            external: memory.external,
+          },
+        });
+        return;
+      }
       if (url.pathname === '/api/rooms') {
         if (request.method === 'GET') {
           sendJson(response, 200, { rooms: roomManager.listRooms() });
@@ -284,6 +317,43 @@ export function createHttpServer({
           throw error;
         }
         return;
+      }
+
+      const botsMatch = /^\/api\/rooms\/([^/]+)\/bots$/.exec(url.pathname);
+      if (botsMatch) {
+        const roomId = botsMatch[1];
+        if (!roomId) throw new HttpError(404, 'Room not found.');
+        const room = roomManager.getRoom(roomId);
+        if (!room) throw new HttpError(404, 'Room not found.');
+        if (request.method === 'POST') {
+          const contentType = request.headers['content-type']?.split(';')[0]?.trim();
+          if (contentType !== 'application/json') {
+            throw new HttpError(415, 'Content-Type must be application/json.');
+          }
+          const parsed = botRequestSchema.safeParse(
+            await readJsonBody(request, config.maxHttpBodyBytes),
+          );
+          if (!parsed.success) {
+            throw new HttpError(400, parsed.error.issues[0]?.message ?? 'Bot request is invalid.');
+          }
+          try {
+            const bots = room.match?.addBots(parsed.data.count);
+            if (!bots) throw new HttpError(503, 'The room match is not ready.');
+            sendJson(response, 201, { bots, room: room.toJSON() });
+          } catch (error: unknown) {
+            if (error instanceof RangeError) throw new HttpError(409, error.message);
+            throw error;
+          }
+          return;
+        }
+        if (request.method === 'DELETE') {
+          const bots = room.match?.removeBots();
+          if (!bots) throw new HttpError(503, 'The room match is not ready.');
+          sendJson(response, 200, { removed: bots.length, room: room.toJSON() });
+          return;
+        }
+        response.setHeader('Allow', 'POST, DELETE');
+        throw new HttpError(405, 'Method not allowed.');
       }
 
       const replayMatch = /^\/api\/replays\/([^/]+)$/.exec(url.pathname);

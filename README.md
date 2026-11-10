@@ -1,4 +1,6 @@
-# Dogfight — JavaScript Game Labs 01–06
+# Dogfight — JavaScript Game Labs 01–07
+
+[![CI](https://github.com/Dofemin211/lab-01-event-loop-and-game-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/Dofemin211/lab-01-event-loop-and-game-loop/actions/workflows/ci.yml)
 
 A continuing multiplayer space-flight game built with TypeScript, Vite, ES modules, and the Canvas 2D API. Labs 01–05 established the fixed-step event/game loop, entity model and combat, cancellable asynchronous asset loading and Web Audio, the Node.js HTTP/WebSocket server and streamed match replays, and shared deterministic simulation with authoritative real-time matches, prediction/reconciliation, interpolation, network experiments, and a binary codec. Lab 06 migrates the project to strict TypeScript while retaining those behaviors.
 
@@ -1080,3 +1082,60 @@ The lobby and HUD remain vanilla DOM code; React, Vue, and Svelte were not added
 - `npm run experiment:netcode` completed on Node v22.14.0 with 10,000 iterations: 24-entity snapshots measured 5,223 JSON bytes vs. 1,242 binary bytes; input messages were 102 vs. 12 bytes; encode/decode averaged 68.13 μs for JSON and 18.66 μs for binary on this run. These timings are machine-dependent.
 - TypeScript source contains no `any` types and has 3 type assertions: one validated branded-number constructor and a two-step test-only canvas image double. All assertions have nearby explanations.
 - A production-server smoke test returned healthy HTTP responses. Two browser clients joined the same room, both appeared in the roster, and a chat message from one appeared in the other. The Canvas 2D renderer was active, but the available capture did not conclusively show both ships at once, so remote-ship visual visibility is not claimed as browser-verified.
+
+## Lab 07 — Testing, Profiling, and Scaling
+
+Lab 07 adds property-based and edge-case tests, authoritative server bots, browser and server profiling, and repeatable load experiments. The shared simulation remains the single source of game rules; profiling did not justify moving the live world into a worker.
+
+### Tests and coverage
+
+`npm test` runs 107 Node tests and 20 Vitest tests (127 total). The property-based suites use fast-check to exercise binary snapshot round-trips and packet sizes, malformed binary packets, valid and version-mutated protocol messages, deterministic simulation, long-running coordinate bounds, and prediction reconciliation. Server and client suites also cover token-bucket limits, heartbeat behavior, the fixed-step accumulator, and performance measurements.
+
+`npm run coverage` applies c8 to the shared runtime package and enforces at least 85% coverage for statements, functions, branches, and lines. The recorded run passed with 91.08% statements, 89.88% functions, 85.97% branches, and 91.08% lines. This is shared-package coverage, not a claim that every client and server branch has the same coverage.
+
+### Bots and multiplayer regression
+
+The server can add up to eight deterministic bots to a room with `POST /api/rooms/:id/bots` and remove them with `DELETE /api/rooms/:id/bots`. Bots submit reproducible tick-based inputs through the same authoritative match simulation. `/api/performance` exposes process CPU, event-loop utilization, memory, and room tick duration samples for experiments.
+
+`npm run e2e` passed the browser test with two independent Chromium contexts: both clients joined the same room, received snapshots containing both ships, saw the roster, and exchanged chat. This validates network state and chat in two real browser pages; it does not assert pixel-level rendering of both ships.
+
+### Browser profile
+
+`npm run experiment:browser-profile` builds the client and profiles 30 seconds with one human browser client and eight authoritative bots. The run used headless Chromium 158, 30 asteroids, and held thrust/fire input:
+
+| Browser measurement  |     p50 |     p95 |     p99 |
+| -------------------- | ------: | ------: | ------: |
+| Frame interval       | 16.7 ms | 16.7 ms | 16.8 ms |
+| Frame callback       |  0.7 ms |  1.2 ms |  1.5 ms |
+| Simulation stage     |  0.1 ms |  0.2 ms |  0.3 ms |
+| Render stage         |  0.5 ms |  0.9 ms |  1.1 ms |
+| Decode stage         |  0.1 ms |  0.3 ms |  0.4 ms |
+| Reconciliation stage |    0 ms |    0 ms |  0.1 ms |
+
+There were no observed long tasks (50 ms or more). The browser did not expose a GC performance entry type in this run, and the experiment does not collect allocation sites or a DevTools heap snapshot. Since the run is headless, its `requestAnimationFrame` cadence is not a measurement of physical display scan-out. Raw output is saved in `evidence/lab07-browser-profile.json`.
+
+### Server load and worker experiment
+
+The load run exercised 8, 32, 64, and 128 WebSocket clients for 10 seconds per scenario. Every client joined; no messages were rejected and no transport errors occurred. Tick values show sampled server-wide p99 and the maximum per-room rolling p99; CPU is a percentage of one core.
+
+| Clients | Rooms | Sampled tick p99 | Worst room rolling p99 | Avg CPU |    Max RSS |
+| ------: | ----: | ---------------: | ---------------------: | ------: | ---------: |
+|       8 |     1 |        2.2703 ms |              9.0561 ms |  10.78% |  76.43 MiB |
+|      32 |     4 |        1.5433 ms |              2.1430 ms |  14.36% |  86.83 MiB |
+|      64 |     8 |        1.1142 ms |              1.7266 ms |  18.44% | 102.14 MiB |
+|     128 |    16 |        0.9497 ms |              1.8562 ms |  31.40% | 113.02 MiB |
+
+The 8-client server profile ran for 20.09 seconds with no server errors, 10.89% average CPU of one core, 0.1096 event-loop utilization, and 111,038,464 bytes RSS. This profile runs the server and scripted WebSocket clients in one Node process, so CPU and heap measurements include the client harness and profiler overhead. Profiling showed avoidable JSON snapshot encoding on binary-only broadcasts; that serialization is now lazy and occurs only when a JSON client needs it. The saved profile is `evidence/lab07-profile.json`, and the load samples are in `evidence/lab07-load.json`.
+
+`npm run experiment:worker` compares five batches of 250,000 ship integration steps. On the recorded run, the main thread averaged 22.865 ms and worker round-trip averaged 24.571 ms; the results matched, and the event loop remained responsive during worker execution. Worker startup and message-transfer overhead exceeded the batch's main-thread cost, so the worker remains an isolated experiment and is not part of gameplay. This benchmark excludes collision detection, rendering, and full world snapshot transfer.
+
+### Final Lab 07 checks
+
+- `npm test` — 127/127 tests passed (107 Node and 20 Vitest).
+- `npm run coverage` — passed all four 85% shared-package thresholds.
+- `npm run typecheck` and `npm run typecheck:tools` — passed.
+- `npm run lint`, `npm run format:check`, and `npm run build` — passed.
+- `npm run e2e` — one two-client browser test passed.
+- Browser profile and 8/32/64/128-client load experiment — completed and saved under `evidence/`.
+
+All performance figures are observations from this machine and workload, not capacity guarantees. The browser test verifies snapshots, roster, and chat, while the browser profiler measures frame/stage timings; neither replaces a visual test on a physical display.

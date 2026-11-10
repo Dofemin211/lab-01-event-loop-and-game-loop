@@ -1,0 +1,122 @@
+{
+  "capturedBeforeChanges": true,
+  "repository": {
+    "branch": "main",
+    "commit": "dd971149bcc46bfb6dbab02ddf708919546947ef",
+    "worktreeInitiallyClean": true
+  },
+  "environment": {
+    "os": "Windows 10 Home 10.0.19045",
+    "cpu": "AMD Ryzen 7 5800H, 8 cores / 16 logical processors",
+    "ramGiB": 13.86,
+    "node": "v22.14.0",
+    "v8": "12.4.254.21-node.22",
+    "chrome": "156.0.8078.49",
+    "browserDevicePixelRatio": 1.25
+  },
+  "lab06Checks": {
+    "tests": {
+      "shared": "8/8 passed",
+      "client": "67/67 passed",
+      "server": "23/23 passed",
+      "total": "98/98 passed"
+    },
+    "lint": "passed",
+    "formatCheck": "passed",
+    "typecheck": "passed",
+    "productionBuild": "passed; Vite transformed 132 modules"
+  },
+  "browserFrameSample": {
+    "durationSeconds": 12,
+    "activeHumanPlayers": 1,
+    "bots": 0,
+    "rafCallbacks": 1979,
+    "javascriptFrameCallbackDurationMs": {
+      "p50": 0.3,
+      "p95": 0.5,
+      "p99": 0.6
+    },
+    "rafFrameIntervalMs": {
+      "p50": 6.1,
+      "p95": 6.2,
+      "p99": 6.2
+    },
+    "longTasks": {
+      "count": 1,
+      "totalDurationMs": 166
+    },
+    "heapUsedBytesAtSampleEnd": 18628940,
+    "limitations": [
+      "This initial browser sample was one player with no bots; it is not the requested eight-bot comparison workload.",
+      "Chrome exposed no GC PerformanceObserver entry type in this environment, so browser GC pause counts and browser allocation sites are unavailable here."
+    ]
+  },
+  "serverMatchSample": {
+    "durationSeconds": 60,
+    "players": 8,
+    "asteroids": 30,
+    "inputRateHzPerPlayer": 30,
+    "allPlayersThrustingAndFiring": true,
+    "serverTickDurationMs": {
+      "sampleCount": 120,
+      "p50": 0.6863,
+      "p95": 1.1708,
+      "p99": 1.4349,
+      "max": 2.4738
+    },
+    "processCpuPercentOfOneCore": 7.0,
+    "eventLoopUtilization": 0.0672,
+    "processMemoryMiB": {
+      "rssAverage": 107.43,
+      "rssMax": 110.66,
+      "heapUsedAverage": 24.98,
+      "heapUsedMax": 31.84
+    },
+    "trafficBytesPerSecond": {
+      "serverIncoming": 1491976,
+      "serverOutgoing": 23785
+    },
+    "v8GcPauses": {
+      "count": 61,
+      "totalDurationMs": 51.02,
+      "major": 1,
+      "minor": 60,
+      "incremental": 0
+    },
+    "v8CpuProfile": {
+      "topProjectSelfTime": [
+        {
+          "function": "serverMessage",
+          "approximateSelfTimeMs": 97.0
+        },
+        {
+          "function": "parseJson",
+          "approximateSelfTimeMs": 42.4
+        },
+        {
+          "function": "WebSocket message handler",
+          "approximateSelfTimeMs": 29.1
+        }
+      ],
+      "limitations": [
+        "The Node CPU and heap profilers were enabled during the sample, adding profiler overhead.",
+        "Top self-time functions are V8 sampling estimates and should not be read as exact wall-clock timings."
+      ]
+    },
+    "sampledProjectAllocationSites15Seconds": [
+      {
+        "function": "Match.#runTick",
+        "sampledBytes": 40704
+      },
+      {
+        "function": "WebSocket message handler",
+        "sampledBytes": 34560
+      },
+      {
+        "function": "Entity/Asteroid construction and World.safePosition",
+        "sampledBytes": 98496,
+        "note": "Mostly setup allocations when building the test arena, not evidence of a per-frame hot spot."
+      }
+    ]
+  }
+}

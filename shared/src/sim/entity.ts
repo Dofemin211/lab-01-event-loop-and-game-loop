@@ -24,6 +24,8 @@ export class Entity<Kind extends EntityKind = EntityKind> {
   readonly kind: Kind;
   pos: Vector2;
   vel: Vector2;
+  previousX: number;
+  previousY: number;
   angle: number;
   radius: number;
   alive: boolean;
@@ -48,6 +50,8 @@ export class Entity<Kind extends EntityKind = EntityKind> {
     Entity.#nextId = Math.max(Entity.#nextId, this.#id + 1);
     this.pos = pos instanceof Vector2 ? pos.clone() : new Vector2(pos.x, pos.y);
     this.vel = vel instanceof Vector2 ? vel.clone() : new Vector2(vel.x, vel.y);
+    this.previousX = this.pos.x;
+    this.previousY = this.pos.y;
     this.angle = angle;
     this.radius = radius;
     this.alive = true;

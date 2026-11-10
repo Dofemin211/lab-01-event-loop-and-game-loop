@@ -2,6 +2,7 @@ import { decodeBinary, encodeBinary, encodeJson } from '@dogfight/shared/codec';
 import { parseServerMessage, serverMessageSchema } from '@dogfight/shared/protocol';
 import type { ClientMessage, ServerMessage } from '@dogfight/shared/protocol';
 import type { NetworkEmulator } from './network-emulator.ts';
+import { measureStage } from './performance.ts';
 
 const PROTOCOL_VERSION = 0;
 type ConnectionState = 'disconnected' | 'connecting' | 'open' | 'joined' | 'reconnecting';
@@ -244,20 +245,18 @@ export class MultiplayerConnection extends EventTarget {
     const binary = typeof raw !== 'string';
     let message: ServerMessage;
     try {
-      if (binary) {
-        const decoded = decodeBinary(raw);
-        if (decoded.type !== 'snapshot' && decoded.type !== 'pong') {
-          throw new TypeError('The server sent a client-only binary message.');
+      message = measureStage('decode', () => {
+        if (binary) {
+          const decoded = decodeBinary(raw);
+          if (decoded.type !== 'snapshot' && decoded.type !== 'pong') {
+            throw new TypeError('The server sent a client-only binary message.');
+          }
+          return serverMessageSchema.parse({ version: PROTOCOL_VERSION, ...decoded });
         }
-        message = serverMessageSchema.parse({ version: PROTOCOL_VERSION, ...decoded });
-      } else {
         const parsed = parseServerMessage(raw);
-        if (!parsed.success) {
-          emit(this, 'error', { message: 'The server sent an unreadable message.' });
-          return;
-        }
-        message = parsed.data;
-      }
+        if (!parsed.success) throw new TypeError('The server sent an unreadable message.');
+        return parsed.data;
+      });
     } catch {
       emit(this, 'error', { message: 'The server sent an unreadable message.' });
       return;

@@ -5,14 +5,14 @@ import type { AssetManifest } from './assets/loader.ts';
 import { MultiplayerConnection } from './connection.ts';
 import { NetworkEmulator } from './network-emulator.ts';
 import { ClientNetcode } from './netcode.ts';
-import type { SequencedInput } from './netcode.ts';
 import { createInput } from './input.ts';
 import { createLoop } from './loop.ts';
-import type { LoopMetrics, LoopStats } from './loop.ts';
+import type { LoopStats } from './loop.ts';
+import { performanceStagePercentiles } from './performance.ts';
 import { createGameEventTarget, emitGameEvent } from './events.ts';
 import { connectHud } from './hud.ts';
 import { Lobby } from './lobby.ts';
-import type { LobbyRoom, RoomSelection } from './lobby.ts';
+import type { RoomSelection } from './lobby.ts';
 import { createCanvas } from './render/canvas.ts';
 import { connectLobbyUI } from './render/lobby-ui.ts';
 import { createStarfield, drawLoadingScreen, drawWorldScene } from './render/draw.ts';
@@ -352,6 +352,17 @@ function render(alpha: number, stats: LoopStats): void {
       // Deliberately block the main thread for the Lab 01 experiment.
     }
   }
+}
+
+function percentileSummary(values: readonly number[]): {
+  readonly p50: number;
+  readonly p95: number;
+  readonly p99: number;
+} {
+  const sorted = [...values].sort((a, b) => a - b);
+  const percentile = (fraction: number): number =>
+    sorted.length ? (sorted[Math.ceil(sorted.length * fraction) - 1] ?? 0) : 0;
+  return { p50: percentile(0.5), p95: percentile(0.95), p99: percentile(0.99) };
 }
 
 function spriteAsset(value: unknown): CanvasImageSource | null {
@@ -745,6 +756,9 @@ function configureExperiments(): void {
         frameIntervalJitterMs: jitter.toFixed(3),
         averageFrameTimeMs: averageFrameTime.toFixed(3),
         maximumFrameTimeMs: maximumFrameTime.toFixed(3),
+        frameIntervalPercentilesMs: percentileSummary(intervals),
+        frameTimePercentilesMs: percentileSummary(completedMeasurement.frameTimes),
+        stageDurationPercentilesMs: performanceStagePercentiles(),
       };
       controls.output.textContent = JSON.stringify(result, null, 2);
       console.table(result);

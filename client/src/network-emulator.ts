@@ -103,8 +103,7 @@ export class NetworkEmulator {
       this.nextDeliveryAt.delete(channel);
       return;
     }
-    let timer: TimerHandle;
-    timer = this.setTimer(
+    const timer = this.setTimer(
       () => {
         this.pending.delete(timer);
         if (this.deliveryQueues.get(channel) !== queue || queue[0] !== packet) return;

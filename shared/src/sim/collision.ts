@@ -14,6 +14,28 @@ export function circlesOverlap(a: GameEntity, b: GameEntity): boolean {
   return dx * dx + dy * dy <= combinedRadius * combinedRadius;
 }
 
+function sweptBulletOverlaps(bullet: GameEntity, target: GameEntity): boolean {
+  if (!bullet.alive || !target.alive || !bullet.collidable || !target.collidable) {
+    return false;
+  }
+  const startX = bullet.previousX - target.previousX;
+  const startY = bullet.previousY - target.previousY;
+  const movementX = bullet.pos.x - bullet.previousX - (target.pos.x - target.previousX);
+  const movementY = bullet.pos.y - bullet.previousY - (target.pos.y - target.previousY);
+  const movementLengthSquared = movementX * movementX + movementY * movementY;
+  const closestTime =
+    movementLengthSquared === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, -(startX * movementX + startY * movementY) / movementLengthSquared),
+        );
+  const closestX = startX + movementX * closestTime;
+  const closestY = startY + movementY * closestTime;
+  const combinedRadius = bullet.radius + target.radius;
+  return closestX * closestX + closestY * closestY <= combinedRadius * combinedRadius;
+}
+
 export function* collisionPairs(world: World): Generator<CollisionPair> {
   const entities = [...world];
   for (let first = 0; first < entities.length; first += 1) {
@@ -23,7 +45,12 @@ export function* collisionPairs(world: World): Generator<CollisionPair> {
     }
     for (let second = first + 1; second < entities.length; second += 1) {
       const b = entities[second];
-      if (b && circlesOverlap(a, b)) {
+      if (
+        b &&
+        (circlesOverlap(a, b) ||
+          (a.kind === 'bullet' && sweptBulletOverlaps(a, b)) ||
+          (b.kind === 'bullet' && sweptBulletOverlaps(b, a)))
+      ) {
         yield [a, b];
       }
     }

@@ -3,6 +3,7 @@ import type { InputReader, ShipState } from '@dogfight/shared/sim';
 import type { SnapshotEntity, SnapshotMessage } from '@dogfight/shared/protocol';
 import type { DrawableEntity } from './render/draw.ts';
 import type { InputState } from './input.ts';
+import { measureStage } from './performance.ts';
 
 const TICK_RATE = 30;
 const STEP = 1 / TICK_RATE;
@@ -29,9 +30,31 @@ export interface SequencedInput {
   readonly fire: boolean;
 }
 
-interface PendingInput {
+export interface PendingInput {
   readonly command: SequencedInput;
   readonly dt: number;
+}
+
+export interface ReconciliationResult {
+  readonly state: ShipState;
+  readonly pending: readonly PendingInput[];
+}
+
+export function reconcilePrediction(
+  authoritative: ShipState,
+  pending: readonly PendingInput[],
+  acknowledgedSeq: number,
+  width: number,
+  height: number,
+): ReconciliationResult {
+  return measureStage('reconcile', () => {
+    const remaining = pending.filter(({ command }) => command.seq > acknowledgedSeq);
+    let state = authoritative;
+    for (const input of remaining) {
+      state = wrapShip(integrate(state, keyboardFor(input.command), input.dt), width, height);
+    }
+    return { state, pending: remaining };
+  });
 }
 
 interface PredictedBullet {
@@ -281,7 +304,11 @@ export class ClientNetcode {
         fire: input.isDown('KeyF'),
       };
       if (this.predicted) {
-        this.predicted = wrapShip(integrate(this.predicted, keyboardFor(command), STEP));
+        this.predicted = wrapShip(
+          integrate(this.predicted, keyboardFor(command), STEP),
+          this.width,
+          this.height,
+        );
         if (this.determinismBreak) {
           this.predicted = {
             ...this.predicted,
@@ -316,11 +343,9 @@ export class ClientNetcode {
       angle: ownEntity.angle,
       thrust: ownEntity.thrust,
     };
-    this.pending = this.pending.filter(({ command }) => command.seq > ack);
-    let reconciled = authoritative;
-    for (const pending of this.pending) {
-      reconciled = wrapShip(integrate(reconciled, keyboardFor(pending.command), pending.dt));
-    }
+    const result = reconcilePrediction(authoritative, this.pending, ack, this.width, this.height);
+    this.pending = [...result.pending];
+    const reconciled = result.state;
     this.predicted = reconciled;
     if (before) {
       const correctionX = shortestDelta(before.x, reconciled.x, this.width);
@@ -454,11 +479,11 @@ function keyboardFor(command: SequencedInput): InputReader {
   };
 }
 
-function wrapShip(ship: ShipState): ShipState {
+function wrapShip(ship: ShipState, width = 960, height = 600): ShipState {
   return {
     ...ship,
-    x: wrapCoordinate(ship.x, 960),
-    y: wrapCoordinate(ship.y, 600),
+    x: wrapCoordinate(ship.x, width),
+    y: wrapCoordinate(ship.y, height),
   };
 }
 

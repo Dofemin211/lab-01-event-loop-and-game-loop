@@ -1,0 +1,129 @@
+{
+  "measuredAt": "2026-11-10T13:09:48.522Z",
+  "host": {
+    "platform": "win32",
+    "architecture": "x64",
+    "cpu": "AMD Ryzen 7 5800H with Radeon Graphics         ",
+    "logicalCores": 16,
+    "totalMemoryBytes": 14877257728
+  },
+  "durationSecondsPerScenario": 10,
+  "scenarios": [
+    {
+      "clients": 8,
+      "rooms": 1,
+      "joined": 8,
+      "rejectedMessages": 0,
+      "transportErrors": 0,
+      "durationSeconds": 10,
+      "serverTrafficBytesPerSecond": {
+        "incoming": 23538,
+        "outgoing": 2615295
+      },
+      "serverTickDurationMs": {
+        "samples": 10,
+        "p50": 1.2646,
+        "p95": 2.2703,
+        "p99": 2.2703,
+        "max": 2.2703,
+        "worstRoomRollingP99": 9.0561
+      },
+      "serverCpuPercentOfOneCore": {
+        "average": 10.78,
+        "max": 15.68
+      },
+      "serverEventLoopUtilization": 0.095,
+      "serverRssMiB": {
+        "average": 74.79,
+        "max": 76.43
+      }
+    },
+    {
+      "clients": 32,
+      "rooms": 4,
+      "joined": 32,
+      "rejectedMessages": 0,
+      "transportErrors": 0,
+      "durationSeconds": 10,
+      "serverTrafficBytesPerSecond": {
+        "incoming": 94480,
+        "outgoing": 10612619
+      },
+      "serverTickDurationMs": {
+        "samples": 40,
+        "p50": 0.7847,
+        "p95": 1.0986,
+        "p99": 1.5433,
+        "max": 1.5433,
+        "worstRoomRollingP99": 2.143
+      },
+      "serverCpuPercentOfOneCore": {
+        "average": 14.36,
+        "max": 31.11
+      },
+      "serverEventLoopUtilization": 0.157,
+      "serverRssMiB": {
+        "average": 84.02,
+        "max": 86.83
+      }
+    },
+    {
+      "clients": 64,
+      "rooms": 8,
+      "joined": 64,
+      "rejectedMessages": 0,
+      "transportErrors": 0,
+      "durationSeconds": 10,
+      "serverTrafficBytesPerSecond": {
+        "incoming": 188328,
+        "outgoing": 21470738
+      },
+      "serverTickDurationMs": {
+        "samples": 80,
+        "p50": 0.6799,
+        "p95": 0.9444,
+        "p99": 1.1142,
+        "max": 1.1142,
+        "worstRoomRollingP99": 1.7266
+      },
+      "serverCpuPercentOfOneCore": {
+        "average": 18.44,
+        "max": 31.2
+      },
+      "serverEventLoopUtilization": 0.2376,
+      "serverRssMiB": {
+        "average": 99.5,
+        "max": 102.14
+      }
+    },
+    {
+      "clients": 128,
+      "rooms": 16,
+      "joined": 128,
+      "rejectedMessages": 0,
+      "transportErrors": 0,
+      "durationSeconds": 10,
+      "serverTrafficBytesPerSecond": {
+        "incoming": 379140,
+        "outgoing": 42947915
+      },
+      "serverTickDurationMs": {
+        "samples": 160,
+        "p50": 0.5897,
+        "p95": 0.8071,
+        "p99": 0.9497,
+        "max": 0.9576,
+        "worstRoomRollingP99": 1.8562
+      },
+      "serverCpuPercentOfOneCore": {
+        "average": 31.4,
+        "max": 43.74
+      },
+      "serverEventLoopUtilization": 0.3979,
+      "serverRssMiB": {
+        "average": 111.08,
+        "max": 113.02
+      }
+    }
+  ]
+}

@@ -175,6 +175,8 @@ export class World implements Iterable<GameEntity> {
 
     const entitiesAtStepStart = [...this.#entities.values()];
     for (const entity of entitiesAtStepStart) {
+      entity.previousX = entity.pos.x;
+      entity.previousY = entity.pos.y;
       if (entity.alive) {
         entity.update(dt, inputs, this);
       }
