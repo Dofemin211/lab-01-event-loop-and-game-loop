@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=../../.env src/index.js",
-    "dev": "node --env-file-if-exists=../../.env --watch src/index.js",
-    "test": "node --test test/*.test.js",
-    "experiment:backpressure": "node src/log/backpressure-experiment.js",
-    "experiment:unsafe-backpressure": "node src/log/unsafe-backpressure-demo.js"
+    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "test": "tsx --test test/*.test.ts",
+    "experiment:backpressure": "tsx src/log/backpressure-experiment.ts",
+    "experiment:unsafe-backpressure": "tsx src/log/unsafe-backpressure-demo.ts"
   },
   "dependencies": {
     "@dogfight/shared": "*",

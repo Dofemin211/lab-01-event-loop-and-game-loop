@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "tsx --test test/*.test.ts"
   },
   "exports": {
-    "./prng": "./src/prng.js",
-    "./protocol": "./src/protocol.js",
-    "./codec": "./src/codec.js",
-    "./sim": "./src/sim/index.js",
-    "./sim/*": "./src/sim/*.js"
+    "./prng": "./src/prng.ts",
+    "./protocol": "./src/protocol.ts",
+    "./codec": "./src/codec.ts",
+    "./sim": "./src/sim/index.ts",
+    "./sim/*": "./src/sim/*.ts"
   }
 }

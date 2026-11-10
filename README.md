@@ -1,6 +1,6 @@
-# Dogfight — JavaScript Game Labs 01–05
+# Dogfight — JavaScript Game Labs 01–06
 
-A continuing multiplayer space-flight game built with vanilla JavaScript, Vite, ES modules, and the Canvas 2D API. Lab 01 established the fixed-step event/game loop; Lab 02 added the entity model and combat; Lab 03 added cancellable asynchronous asset loading and Web Audio; Lab 04 added the Node.js HTTP/WebSocket server and streamed match replays; Lab 05 adds shared deterministic simulation, authoritative real-time matches, prediction/reconciliation, interpolation, network experiments, and a binary codec.
+A continuing multiplayer space-flight game built with TypeScript, Vite, ES modules, and the Canvas 2D API. Labs 01–05 established the fixed-step event/game loop, entity model and combat, cancellable asynchronous asset loading and Web Audio, the Node.js HTTP/WebSocket server and streamed match replays, and shared deterministic simulation with authoritative real-time matches, prediction/reconciliation, interpolation, network experiments, and a binary codec. Lab 06 migrates the project to strict TypeScript while retaining those behaviors.
 
 ## Run it
 
@@ -28,6 +28,7 @@ Run the quality checks from the project folder:
 npm run lint
 npm run format:check
 npm test
+npm run typecheck
 npm run build
 ```
 
@@ -54,27 +55,28 @@ eslint.config.js
 .prettierrc.json
 README.md
 scripts/
-  dev.js                    # Starts/stops the HTTP server and Vite together
-  network-benchmark.js      # Reproducible Node JSON/binary comparison
+  dev.ts                    # Starts/stops the HTTP server and Vite together
+  network-benchmark.ts      # Reproducible Node JSON/binary comparison
 client/
   package.json
   index.html
   vite.config.js            # Proxies /api and /ws to the Node server
   src/                      # Game, assets, netcode, rendering, lobby, and audio
-    netcode.js              # Prediction, reconciliation, and snapshot interpolation
-    network-emulator.js     # Ordered per-direction delay, jitter, and loss
+    main.ts                 # Typed browser composition root
+    netcode.ts              # Prediction, reconciliation, and snapshot interpolation
+    network-emulator.ts     # Ordered per-direction delay, jitter, and loss
   tests/                    # Client tests, including earlier-lab regressions
   public/assets/            # Manifest, arena, sprite sheet, and sound effects
 server/
   package.json
   src/
-    index.js                # HTTP + WebSocket app composition and graceful shutdown
-    match.js                # Authoritative 30 Hz room simulation and snapshots
-    config.js               # Validated environment configuration
-    http.js                 # Static files, room API, health, and streaming replay routes
-    protocol.js             # Versioned JSON protocol validation
-    rooms.js                # EventEmitter Room and Map-backed RoomManager
-    ws.js                   # Join/chat lifecycle, heartbeat, rate/slow-client handling
+    index.ts                # HTTP + WebSocket app composition and graceful shutdown
+    match.ts                # Authoritative 30 Hz room simulation and snapshots
+    config.ts               # Zod-validated environment configuration
+    http.ts                 # Static files, room API, health, and streaming replay routes
+    protocol.ts             # Shared versioned JSON protocol validation
+    rooms.ts                # Typed Room events and Map-backed RoomManager
+    ws.ts                   # Join/chat lifecycle, heartbeat, rate/slow-client handling
     log/
       matchlog.js           # Object-mode Transform and bounded NDJSON pipeline
       replay.js             # Safe replay IDs and incremental NDJSON parsing
@@ -84,18 +86,18 @@ server/
 shared/
   package.json              # DOM-free @dogfight/shared workspace
   src/
-    codec.js                # JSON and versioned DataView packet codecs
-    protocol.js             # Shared input validation and key mapping
-    prng.js                 # Seeded Mulberry32 generator
+    codec.ts                # JSON and versioned DataView packet codecs
+    protocol.ts             # Zod schemas and shared input validation
+    prng.ts                 # Seeded Mulberry32 generator
     sim/                    # Canonical simulation used by browser and server
   test/                     # Node-only deterministic and codec tests
 evidence/
   lab04-rss-samples.csv     # Raw 188-point RSS record from the documented run
 ```
 
-`shared/src/sim/` is the canonical simulation package. It does not import the DOM, canvas, audio, or HUD modules, and both Node and browser tests import it directly. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.js` connects that boundary to an `EventTarget`/`CustomEvent` instance. The live game uses mutable entity objects and captures previous-state data for interpolation. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
+`shared/src/sim/` is the canonical simulation package. It does not import the DOM, canvas, audio, or HUD modules, and both Node and browser tests import it directly. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.ts` connects that boundary to the typed client event bus. The live game uses mutable entity objects and captures previous-state data for interpolation. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 
-`createInput(target)` in `client/src/input.js` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances. The browser, server, and shared simulation are separate npm workspaces: the development launcher runs Vite and Node together, while the production Node process serves `client/dist` together with the HTTP and WebSocket APIs.
+`createInput(target)` in `client/src/input.ts` uses a closure to keep its `Set`s private. A keydown edge remains available until a simulation step consumes it, which avoids losing a short key press on a display that renders more often than the simulation advances. The browser, server, and shared simulation are separate npm workspaces: the development launcher runs Vite and Node together, while the production Node process serves `client/dist` together with the HTTP and WebSocket APIs.
 
 ## Event loop, in beginner-friendly terms
 
@@ -1021,3 +1023,60 @@ Binary reduced bytes in both measurements. It was faster for the larger Node sna
 ### Capture your own visual evidence
 
 The integrated browser can show and capture a screenshot, but this environment did not provide a GIF recording/saving tool. For submission evidence, run `npm run dev`, open two independent browser windows at `http://localhost:5173/?net=1`, join the same room with distinct names, and start a screen recording or GIF capture. Show both full canvases at once while one player holds thrust and the other sees the remote ship move. For the impaired-network shot, set 100 ms delay, ±30 ms jitter and 2% loss in one client's panel and keep its netgraph visible; record the browser, duration and settings. Save the real files under `evidence/` and note their filenames; do not use a mock or redraw the UI.
+
+## Lab 06 — TypeScript: Types for the Protocol, the Simulation, and Both Sides of the Wire
+
+Lab 06 migrates the game, shared simulation, server, tests, and experiment scripts to TypeScript. The browser remains vanilla TypeScript with Vite; the Node server and shared package run through `tsx`. Runtime game behavior and the Lab 01–05 material above are retained.
+
+### TypeScript architecture and checking
+
+The root `tsconfig.base.json` enables `strict`, `noUncheckedIndexedAccess`, and `verbatimModuleSyntax`. `shared/tsconfig.json`, `server/tsconfig.json`, and `client/tsconfig.json` extend it with the platform libraries and included source/tests for their package. Shared and server use `NodeNext` module resolution; Vite handles the client's TypeScript modules. The workspace package exports point directly at shared `.ts` modules.
+
+Vite transpiles TypeScript but does not perform the full type check. Run the separate compiler check from the repository root:
+
+```powershell
+npm run typecheck
+```
+
+The command runs `tsc --noEmit` for all three workspaces, and `.github/workflows/ci.yml` runs it on pushes and pull requests. `npm test` runs the shared determinism/codec tests, client regressions, and server integration tests.
+
+### Protocol and type safety
+
+`shared/src/protocol.ts` is the canonical JSON protocol boundary. Zod schemas describe client and server messages; exported message types come from `z.infer`. `parseClientMessage(data: unknown)` returns a success/error result instead of throwing on malformed input. Server configuration and lobby inputs are also parsed at runtime. The binary codec shares the protocol's input model and checks packet versions, exact lengths, enum-like codes, numeric ranges, and flags. JSON and binary encoders implement the common `Codec` interface.
+
+Entity snapshots are discriminated unions on `kind`, and message/entity dispatches use exhaustive `never` checks. `EntityId`, `Tick`, and `Seq` are branded numbers so TypeScript can distinguish IDs, simulation time, and input sequence values without changing their runtime representation. `Vector2` coordinates and published snapshots are readonly. The client `Bus<GameEvents>` links each event name to its exact payload type.
+
+`unknown` is the safe type for untrusted input: code must validate or narrow it before reading fields. `any` disables those checks and can silently spread unsafety; the migrated source and tests use no `any`.
+
+### What TypeScript found
+
+The migration surfaced and fixed concrete contract mismatches:
+
+- The optional audio context could be `null`, while asset loading had incorrectly required a non-null browser `AudioContext`.
+- DOM lookups returned nullable, generic `Element` values even where code expected buttons, selects, or outputs; the experiment controls now use checked element types.
+- A generic DOM `Event` does not guarantee a `.detail` property. Network notifications are now parsed from `unknown`, and lobby details are checked before use.
+- Asset manifest data came from JSON as `unknown`, and benchmark callback parameters had no safe inferred types until the manifest was parsed.
+- `catch` values are `unknown`; error reporting now narrows `Error` values instead of reading `.message` blindly.
+- Client-predicted bullets can have negative render-only IDs and nullable owners, which do not fit the stricter server snapshot type. Rendering now has a distinct drawable union for this client-only state.
+- The first integration run caught input messages passing protocol envelope fields into the stricter simulation command validator. The server now maps only the command fields into the simulation.
+
+No compiler error established a misspelled wire field; Zod remains the runtime check for data received over the network.
+
+### Three useful types, explained for JavaScript developers
+
+1. **`EntityId` / `Tick` / `Seq`** — all are numbers at runtime, but TypeScript prevents accidentally passing a tick counter where an entity ID is required.
+2. **`SnapshotEntity`** — the `kind` field tells TypeScript which entity-specific fields exist. After `if (entity.kind === 'ship')`, the compiler knows it is safe to use ship-only data.
+3. **`Bus<GameEvents>`** — event names and payloads stay connected. Emitting `scoreChanged` requires a score payload, while emitting `audioError` requires a message.
+
+### Lobby and HUD framework decision
+
+The lobby and HUD remain vanilla DOM code; React, Vue, and Svelte were not added. The existing screen is small, event-driven, and coupled to a canvas game loop rather than a large component state tree. A framework would add a dependency and another rendering lifecycle without improving simulation timing, network validation, or canvas rendering. Typed events and validated room data provide the needed boundaries with less bundle and build complexity. Reconsider a framework if the lobby grows into a richer application.
+
+### Validation results
+
+- `npm test` — 98/98 tests passed: shared 8/8, client 67/67, server 23/23.
+- `npm run lint`, `npm run format:check`, `npm run build`, and `npm run typecheck` — all passed. The production Vite build transformed 132 modules.
+- The Lab 05 backpressure experiment completed with its 200 MiB cap; the unsafe demonstration remained capped at 8 MiB. The generated backpressure data and RSS CSV were temporary and removed after verification.
+- `npm run experiment:netcode` completed on Node v22.14.0 with 10,000 iterations: 24-entity snapshots measured 5,223 JSON bytes vs. 1,242 binary bytes; input messages were 102 vs. 12 bytes; encode/decode averaged 68.13 μs for JSON and 18.66 μs for binary on this run. These timings are machine-dependent.
+- TypeScript source contains no `any` types and has 3 type assertions: one validated branded-number constructor and a two-step test-only canvas image double. All assertions have nearby explanations.
+- A production-server smoke test returned healthy HTTP responses. Two browser clients joined the same room, both appeared in the roster, and a chat message from one appeared in the other. The Canvas 2D renderer was active, but the available capture did not conclusively show both ships at once, so remote-ship visual visibility is not claimed as browser-verified.

@@ -9,25 +9,33 @@
     "shared"
   ],
   "scripts": {
-    "dev": "node scripts/dev.js",
+    "dev": "tsx scripts/dev.ts",
     "dev:client": "npm run dev --workspace @dogfight/client",
-    "dev:server": "node --env-file-if-exists=.env --watch server/src/index.js",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/src/index.ts",
     "build": "npm run build --workspace @dogfight/client",
-    "start": "node --env-file-if-exists=.env server/src/index.js",
+    "start": "tsx --env-file-if-exists=.env server/src/index.ts",
     "test": "npm run test:shared && npm run test:client && npm run test:server",
     "test:shared": "npm run test --workspace @dogfight/shared",
     "test:client": "npm run test --workspace @dogfight/client",
     "test:server": "npm run test --workspace @dogfight/server",
+    "typecheck": "tsc --noEmit -p shared/tsconfig.json && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p client/tsconfig.json",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "experiment:backpressure": "npm run experiment:backpressure --workspace @dogfight/server",
     "experiment:unsafe-backpressure": "npm run experiment:unsafe-backpressure --workspace @dogfight/server",
-    "experiment:netcode": "node scripts/network-benchmark.js"
+    "experiment:netcode": "tsx scripts/network-benchmark.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
     "eslint": "^10.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }
