@@ -427,8 +427,9 @@ test('room player cap rejects a second participant and graceful shutdown closes 
   const secondCode = await waitForClose(second);
   assert.equal(secondCode, 1008);
 
+  const firstClose = waitForClose(first);
   await app.shutdown();
-  const firstCode = await waitForClose(first);
+  const firstCode = await firstClose;
   assert.equal(firstCode, 1001);
   assert.equal(app.server.listening, false);
 });
