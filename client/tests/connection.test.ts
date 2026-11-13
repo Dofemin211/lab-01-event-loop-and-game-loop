@@ -203,6 +203,40 @@ test('intentional disconnect cancels reconnect and server rejection stops reconn
   assert.equal(timers.length, 0);
 });
 
+test('shutdown notice is surfaced while the socket reconnects after its close', () => {
+  const { connection, timers } = createConnection();
+  connection.connect('training', 'Ace');
+  const socket = getSocket(0);
+  socket.open();
+  socket.receive(joinedMessage('training'));
+  let notice = '';
+  connection.addEventListener('error', (event) => {
+    if (!(event instanceof CustomEvent)) throw new TypeError('Expected an error detail event.');
+    const detail: unknown = event.detail;
+    if (
+      typeof detail !== 'object' ||
+      detail === null ||
+      !('message' in detail) ||
+      typeof detail.message !== 'string'
+    ) {
+      throw new TypeError('Expected a shutdown message.');
+    }
+    notice = detail.message;
+  });
+  socket.receive({
+    version: 0,
+    type: 'shutdown',
+    message: 'Server is restarting. Reconnecting...',
+  });
+  assert.equal(notice, 'Server is restarting. Reconnecting...');
+  assert.equal(connection.state, 'joined');
+  socket.drop(1001, 'Server shutting down.');
+  assert.equal(connection.state, 'reconnecting');
+  assert.equal(timers.length, 1);
+  connection.disconnect();
+  assert.equal(connection.state, 'disconnected');
+});
+
 test('connection validates chat messages and applies a bounded queue', () => {
   const { connection } = createConnection({ maxQueue: 1 });
   connection.connect('training', 'Ace');

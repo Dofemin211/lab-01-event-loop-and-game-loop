@@ -6,8 +6,11 @@ import { parseClientMessage, ProtocolError, serverMessage } from './protocol.ts'
 import type { ServerConfig } from './config.ts';
 import type { Room, RoomManager, RoomPlayer, ChatRecord } from './rooms.ts';
 import { TokenBucket } from './token-bucket.ts';
+import { WebSocketSecurityMetrics } from './ws-security.ts';
 
-type Logger = Pick<Console, 'error'>;
+type Logger = Pick<Console, 'error'> & {
+  event?(name: string, fields?: Readonly<Record<string, string | number | boolean>>): void;
+};
 type OutgoingData = string | Buffer | ArrayBuffer;
 
 interface SocketLike extends NodeJS.EventEmitter {
@@ -28,6 +31,7 @@ interface WebSocketServerLike extends NodeJS.EventEmitter {
 interface SocketState {
   readonly config: ServerConfig;
   readonly logger: Logger;
+  readonly securityMetrics: WebSocketSecurityMetrics;
   room: Room | null;
   player: RoomPlayer | null;
   codec: 'binary' | 'json';
@@ -69,6 +73,9 @@ function send(
         logError(state.logger, 'WebSocket send failed:', error);
       }
     });
+    state.securityMetrics.recordSent(
+      typeof message === 'string' ? Buffer.byteLength(message) : message.byteLength,
+    );
     return true;
   } catch (error: unknown) {
     logError(state.logger, 'WebSocket send failed:', error);
@@ -148,6 +155,7 @@ export function installWebSocketHandlers(
   roomManager: RoomManager,
   config: ServerConfig,
   logger: Logger = console,
+  securityMetrics = new WebSocketSecurityMetrics(),
 ) {
   const states = new Map<SocketLike, SocketState>();
   const attachRoom = (room: Room): void => attachRoomBroadcasts(room, wss, states, logger);
@@ -162,6 +170,7 @@ export function installWebSocketHandlers(
     const state: SocketState = {
       config,
       logger,
+      securityMetrics,
       room: null,
       player: null,
       codec: 'json',
@@ -181,18 +190,27 @@ export function installWebSocketHandlers(
     state.joinTimer.unref();
     states.set(socket, state);
 
-    socket.on('error', (error) => logError(logger, 'WebSocket client error:', error));
+    socket.on('error', (error) => {
+      if (/max payload size/i.test(error.message)) {
+        recordRejection('payload_rejected');
+      }
+      logError(logger, 'WebSocket client error:', error);
+    });
     socket.on('pong', () => {
       state.alive = true;
       state.missedHeartbeats = 0;
     });
     socket.on('message', (data: RawData, isBinary: boolean) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      securityMetrics.recordReceived(rawDataLength(data));
       if (!consumeToken(state)) {
+        recordRejection('rate_limited');
         send(socket, state, serverMessage('error', { message: 'Message rate limit exceeded.' }));
         socket.close(1008, 'Rate limit exceeded.');
         return;
       }
       if (rawDataLength(data) > config.maxPayloadBytes) {
+        recordRejection('payload_rejected');
         send(socket, state, serverMessage('error', { message: 'Message is too large.' }));
         socket.close(1009, 'Message too large.');
         return;
@@ -206,6 +224,7 @@ export function installWebSocketHandlers(
           socket.close(1011, 'Internal server error.');
           return;
         }
+        recordRejection('payload_rejected');
         send(socket, state, serverMessage('error', { message: error.message }));
         socket.close(error.closeCode, error.message.slice(0, 100));
         return;
@@ -230,6 +249,7 @@ export function installWebSocketHandlers(
             state.player = room.join(player);
             state.codec = message.codec ?? 'json';
             clearTimeout(state.joinTimer);
+            logger.event?.('player.joined', { roomId: room.id, playerId: player.id });
             send(
               socket,
               state,
@@ -313,11 +333,17 @@ export function installWebSocketHandlers(
     socket.on('close', () => {
       clearTimeout(state.joinTimer);
       if (state.room && state.player) {
+        logger.event?.('player.left', { roomId: state.room.id, playerId: state.player.id });
         state.room.leave(state.player.id);
       }
       states.delete(socket);
     });
   });
+
+  function recordRejection(reason: 'rate_limited' | 'payload_rejected'): void {
+    securityMetrics.recordRejection(reason);
+    logger.event?.('websocket.rejected', { reason });
+  }
 
   const heartbeat = setInterval(() => {
     for (const socket of wss.clients) {
@@ -345,17 +371,41 @@ export function installWebSocketHandlers(
 
   return {
     states,
-    close(): void {
+    async close(): Promise<void> {
       clearInterval(heartbeat);
       roomManager.off('roomCreated', attachRoom);
+      const closing: Promise<void>[] = [];
       for (const [socket, state] of states) {
         clearTimeout(state.joinTimer);
         if (state.room && state.player) {
           state.room.leave(state.player.id);
         }
-        socket.close(1001, 'Server shutting down.');
+        if (socket.readyState !== WebSocket.OPEN) {
+          socket.close(1001, 'Server shutting down.');
+          continue;
+        }
+        closing.push(
+          new Promise<void>((resolve) => {
+            socket.once('close', () => resolve());
+            try {
+              socket.send(
+                serverMessage('shutdown', { message: 'Server is restarting. Reconnecting...' }),
+                (error?: Error) => {
+                  if (error) {
+                    logError(logger, 'Could not deliver the shutdown notification:', error);
+                  }
+                  socket.close(1001, 'Server shutting down.');
+                },
+              );
+            } catch (error: unknown) {
+              logError(logger, 'Could not deliver the shutdown notification:', error);
+              socket.close(1001, 'Server shutting down.');
+            }
+          }),
+        );
       }
       states.clear();
+      await Promise.all(closing);
     },
   };
 }

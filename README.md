@@ -1,10 +1,33 @@
-# Dogfight — JavaScript Game Labs 01–07
+# Dogfight — Multiplayer space flight
 
 [![CI](https://github.com/Dofemin211/lab-01-event-loop-and-game-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/Dofemin211/lab-01-event-loop-and-game-loop/actions/workflows/ci.yml)
 
-A continuing multiplayer space-flight game built with TypeScript, Vite, ES modules, and the Canvas 2D API. Labs 01–05 established the fixed-step event/game loop, entity model and combat, cancellable asynchronous asset loading and Web Audio, the Node.js HTTP/WebSocket server and streamed match replays, and shared deterministic simulation with authoritative real-time matches, prediction/reconciliation, interpolation, network experiments, and a binary codec. Lab 06 migrates the project to strict TypeScript while retaining those behaviors.
+A browser-based multiplayer space-flight game and a hands-on JavaScript/TypeScript learning project. Fly through shared rooms, fight asteroids, chat, and explore how an authoritative server, fixed-step simulation, prediction, reconciliation, interpolation, and binary WebSocket snapshots work together.
 
-## Run it
+> **Demo:** No public deployment or demo video exists yet. Record a 3–5 minute walkthrough after the first real deployment.
+> **Gameplay GIF:** Placeholder — capture a short two-player session and add it under `docs/media/`.
+
+**Highlights**
+
+- Multiplayer rooms, chat, authoritative 30 Hz server simulation, client prediction/reconciliation, and remote-player interpolation.
+- Canvas gameplay with keyboard controls, asteroids, pickups, score, HUD, audio, and network diagnostics.
+- Versioned JSON/binary protocol, deterministic shared simulation, and replayable match logs.
+- Production process controls, graceful shutdown, WebSocket Origin/IP hardening, JSON logs, health/readiness, and Prometheus-format metrics.
+- Installable PWA shell with offline access to previously loaded static game assets. Live rooms and API calls remain online-only.
+
+## Architecture and technology
+
+The npm workspaces are `client` (TypeScript + Vite + Canvas), `server` (TypeScript + Node.js HTTP/WebSocket), and `shared` (DOM-free TypeScript simulation and protocol). The compiled Node server serves the Vite client and `/api`, `/health`, `/ready`, `/metrics`, and `/ws` from one origin. Docker Compose places Caddy in front for HTTPS/WSS termination and runs one in-memory game server.
+
+TypeScript, Node.js 22, Vite, WebSocket (`ws`), Zod, Vitest, Playwright, Docker Compose, and Caddy are used. See [the deployment runbook](deploy/DEPLOYMENT.md) for what is prepared and which hosting actions remain manual.
+
+## Deployment status
+
+Docker, GHCR release publishing, optional tag-triggered VPS deployment, and a Hetzner-oriented single-instance runbook are prepared in the repository. They have **not** been run from this Windows workspace: Docker and a Linux environment are unavailable, and no hosting account, credentials, DNS, registry image, or public URL has been created. Do not treat this repository as a live game service yet.
+
+The Lab 07 local load evidence in [evidence/lab08-m2-load.json](evidence/lab08-m2-load.json) is a Windows local run, not a public capacity or uptime claim. A single process is required because rooms and matches are held in memory.
+
+## Developer quick start
 
 Use Node.js 22 (the version in `.nvmrc`) and npm:
 
@@ -20,7 +43,7 @@ npm run build
 npm start
 ```
 
-The production server listens on `http://127.0.0.1:3000` by default. Configuration is read from `.env` if present (see the Lab 04 section); do not commit secrets or local settings.
+The development server listens on `http://127.0.0.1:3000` by default. `npm start` runs the compiled production server; set `HOST=0.0.0.0`, a production `PORT`, and an explicit `ALLOWED_ORIGINS` when running it outside the provided Docker setup. Configuration is read from `.env` if present (see `.env.example`); do not commit secrets or local settings.
 
 For multiplayer, open the Vite URL in two browser windows, enter different pilot names, and join the same room. The normal client uses binary snapshots; use `?net=1` to expose Lab 05's developer-only network tools.
 
@@ -30,9 +53,25 @@ Run the quality checks from the project folder:
 npm run lint
 npm run format:check
 npm test
+npm run coverage
 npm run typecheck
+npm run typecheck:tools
 npm run build
+npm run smoke:production
+npm run e2e
 ```
+
+### Run the production container locally
+
+Copy `.env.example` to `.env`, keep its `https://localhost:8443` Origin and local ports for a local run, then:
+
+```powershell
+docker compose up --build -d
+docker compose ps
+docker compose down
+```
+
+The local Caddy certificate uses its own local CA and may require trusting that CA in the browser. The production server requires a nonempty exact Origin allowlist; Compose intentionally fails if `ALLOWED_ORIGINS`, `DOMAIN`, or `HTTPS_URL` are missing.
 
 ### Controls and features
 
@@ -73,6 +112,7 @@ server/
   package.json
   src/
     index.ts                # HTTP + WebSocket app composition and graceful shutdown
+    logger.ts               # Level-filtered structured JSON process logs
     match.ts                # Authoritative 30 Hz room simulation and snapshots
     config.ts               # Zod-validated environment configuration
     http.ts                 # Static files, room API, health, and streaming replay routes
@@ -95,7 +135,78 @@ shared/
   test/                     # Node-only deterministic and codec tests
 evidence/
   lab04-rss-samples.csv     # Raw 188-point RSS record from the documented run
+  lab08-m2-load.json        # Dated WebSocket-hardening load-test results
 ```
+
+### Lab 08 — Milestone 1: Production-ready Node.js
+
+The production entry point is compiled JavaScript at `dist/server-runtime/server/src/index.js`; `npm start` does not use `tsx` or watch mode. `npm run build` builds the Vite client and compiles both server and shared TypeScript. The build prepares a small runtime `@dogfight/shared` package in `dist/server-runtime/node_modules` so Node can resolve the shared workspace's emitted `.js` files without changing development imports. The normal Vite + `tsx` development workflow is unchanged.
+
+The production launcher sets `NODE_ENV=production` and the project root. It accepts `PORT`, `HOST`, `LOG_LEVEL`, `ALLOWED_ORIGINS`, `MAX_CONNECTIONS_PER_IP`, `MAX_ROOMS`, and `MAX_PLAYERS_PER_ROOM`; numeric and enum values are validated by the server's Zod config. Production binds to `0.0.0.0` by default; development binds to `127.0.0.1`. `.env.example` contains non-secret examples.
+
+`GET /health` reports liveness, app version, and build Git SHA. `GET /ready` reports readiness and returns `503` while draining. On `SIGTERM`/`SIGINT`, readiness is withdrawn, new HTTP/WebSocket connections are refused, existing WebSocket clients receive a `shutdown` protocol message and close code `1001`, and match logs are flushed before exit. A bounded deadline terminates remaining connections if graceful completion stalls. Uncaught exceptions and unhandled rejections are logged and cause a non-zero exit after shutdown. The default logger emits level-filtered JSON records; `LOG_LEVEL` supports `trace`, `debug`, `info`, `warn`, `error`, `fatal`, and `silent`.
+
+Build and exercise the compiled process (including an actual WebSocket client, `SIGTERM`, and an isolated crash-handler child process) with:
+
+```powershell
+npm run build
+npm run smoke:production
+```
+
+The build stamps the package version and current Git SHA. `GIT_SHA` and `APP_VERSION` can override those values for release builds; if Git metadata is unavailable at build time, the SHA is honestly reported as `unknown`.
+
+### Lab 08 — Milestone 2: WebSocket hardening
+
+The WebSocket upgrade is checked before a session is created. Production requires exactly one valid `Origin` whose scheme, hostname, and port match an entry in `ALLOWED_ORIGINS`; a missing, duplicated, malformed, or unlisted Origin is rejected. Configure comma-separated bare origins such as `https://game.example` (do not include a path). Development allows a missing Origin for non-browser local tools and allows same-host loopback HTTP Origins; an explicitly configured origin is also accepted. This development exception is not used in production.
+
+`MAX_CONNECTIONS_PER_IP` limits concurrent upgraded connections. Reservations are released once when the underlying connection closes, and the in-memory address table is capped at 10,000 distinct active IP keys. When full, new distinct IPs are refused until an active key is released. The immediate TCP peer address is authoritative by default; `X-Forwarded-For` is ignored unless that peer exactly matches an address in `TRUSTED_PROXY_IPS`. For a trusted proxy, the server walks the forwarded chain from right to left and selects the first untrusted address. Configure only proxies under your control, and ensure they overwrite or safely append the header; never trust a public client-supplied header.
+
+The bounded `GET /api/security-stats` response reports active connections, tracked IP count, and fixed-cardinality counters for `origin_rejected`, `ip_limit_exceeded`, `invalid_handshake`, `rate_limited`, and `payload_rejected`. It does not expose IP addresses or use them as metric labels. Existing `GET /api/stats` remains unchanged for Lab 07 tooling.
+
+Chaos coverage verifies disconnect cleanup while another player keeps ticking and reconnect as a new session. The malformed-frame policy closes a socket on the first invalid frame with code `1007`; therefore queued frames cannot be claimed as server-processed traffic. An earlier unpaced client loop called `send` 1,000 times in 30.038 ms, but the server recorded only one payload rejection. The paced local run scheduled at 1 ms intervals attempted 5 frames over 6.824 ms (840.2 attempts/s between first and last); the server recorded one malformed payload and closed the attacker. Attack/control-room tick p99 was 3.3302/2.0535 ms both before and after. This is a fail-fast protection result, **not** evidence that the server processed 1,000 malformed frames in one second. The actual run is recorded in `evidence/lab08-deployment-prep-chaos.json`; sustained external network flooding still requires a dedicated Linux/staging test.
+
+The original local production-like load run used 8, 32, and 64 clients for 3 seconds per scenario: all 104 connections joined, with no transport errors or security rejections. Its server tick p99 values were 1.347, 1.007, and 1.051 ms respectively. The latest local rerun again joined all 104 clients with no transport errors/rejections; p99 was 3.2759, 2.8092, and 2.5730 ms, with worst-room rolling p99 19.3637, 13.8297, and 3.3077 ms. Both are Windows x64 measurements, not production capacity guarantees. Original data is in `evidence/lab08-m2-load.json`; the latest run's parameters and results are in `evidence/lab08-deployment-prep-load.json`.
+
+The existing server tests also cover the Lab 04 token-bucket rate limit, payload size, join timeout, heartbeat, and slow-client handling; the normal load scenarios above intentionally use valid traffic and did not trigger those rejection paths. Load-test output should be written to `evidence/lab08-m2-load.json` rather than the Lab 07 evidence file:
+
+```powershell
+$env:LOAD_BASE_URL = "http://127.0.0.1:3000"
+$env:LOAD_ORIGIN = "http://127.0.0.1:3000"
+$env:LOAD_CLIENT_COUNTS = "8,32,64"
+$env:LOAD_DURATION_SECONDS = "10"
+$env:LOAD_EVIDENCE_FILE = "evidence/lab08-m2-load.json"
+npm run experiment:load
+```
+
+The current reconnect flow reconnects and rejoins, but the new connection receives a new player identity. The server does not persist room or match state across process loss, so a reconnect does not restore the previous match or player state. A real process-termination chaos test requires a Linux-compatible environment for an actual `SIGTERM`; the production smoke test uses a platform-specific signal shim on Windows.
+
+### Lab 08 — Production packaging and release preparation
+
+The multi-stage [Dockerfile](Dockerfile) builds the Vite client and compiled Node/shared workspaces, then installs production dependencies in a non-root Node 22 Alpine runtime image. The Node and Caddy base images are pinned by immutable registry digests. The app uses exec-form `CMD`, a writable named match-log volume, a bounded health check, and no published app port. [compose.yaml](compose.yaml) starts one game process and one Caddy reverse proxy with resource limits and a static proxy IP. The release workflow checks all quality gates, requires the tagged commit to exist on `main`, checks the final image is below 200 MiB, and publishes version and full-SHA tags to GHCR. An optional deployment job is disabled until explicitly enabled with host-specific secrets and variables.
+
+The deployment runbook documents the recommended one-instance Hetzner VPS, reverse proxy and Origin trust model, GHCR, TLS, firewall, health checks, and manual setup. No image was built or published and no hosting resource has been created or tested from this workspace; see [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md) for precise limitations and remaining manual steps.
+
+`GET /metrics` emits Prometheus text-format gauges and fixed-cardinality WebSocket rejection counters. It includes process CPU/RSS, event-loop utilization, traffic rates, room/player counts, and worst-room tick p99. It uses no third-party metrics service or IP-valued labels. Restrict access to this endpoint at the public edge if the deployment's operational statistics should not be public.
+
+### Progressive Web App
+
+The web manifest and 192/512 PNG icons provide the install metadata. The service worker caches the app shell and same-origin static resources after successful loads, uses network-first navigation with the cached root as offline fallback, and never handles `/api`, WebSocket, health, readiness, or metrics requests. Only previously loaded static assets can be available offline; matchmaking and multiplayer require a live server. Cache names are versioned so a new worker replaces only this app's old shell cache. The PWA browser test checks metadata, install icons, offline shell loading, and that API responses are not served from cache.
+
+### Release and deployment status
+
+`npm run smoke:production` exercises the compiled production server and its WebSocket/SIGTERM behavior. The regular CI workflow runs checks, production smoke, and E2E; the tag workflow additionally publishes a size-checked image and can optionally deploy to the preconfigured single VPS. Create `v1.0.0` and `lab-08` only after a real public deployment, cross-network two-user test, Linux/Docker shutdown test, and review of the final evidence. No release tag, commit, image publication, deployment, or public demo URL was created as part of this preparation.
+
+No real two-network demo video, public WSS URL, uptime measurements, or monitoring service exists yet. The future 3–5 minute recording should show two users on separate networks, an anonymized RTT/netgraph, reconnect behavior, and the deployed HTTPS origin without exposing secrets or user-identifying data.
+
+### What TypeScript and production hardening found
+
+The strict migration and the production-readiness work revealed concrete boundary issues: environment variables arrive as strings and need range/enum validation; malformed client JSON cannot be treated as trusted protocol data; map lookups and socket lifecycle state can be absent; and IP forwarding is not trustworthy unless the immediate proxy peer is explicitly configured. The build also needs emitted workspace metadata for Node to resolve the compiled shared package. These findings are addressed in the schema validation, protocol parsing, lifecycle guards, trusted-proxy allowlist, and production build preparation. They are implementation findings, not claims about a static-analysis report.
+
+The project intentionally keeps the lobby and HUD in its existing Canvas/DOM client rather than adding React, Vue, or Svelte. This avoids a second rendering/state abstraction for a small fixed interface and preserves the Lab 01–07 architecture; the tradeoff is that accessible UI and larger future lobby features require more hand-written DOM updates.
+
+### What I'd do next
+
+Deploy one instance, verify TLS and WebSocket traffic from two real networks, collect a correctly paced Linux load/flood run, configure external uptime alerts, record an anonymized demo, then review the evidence before creating `v1.0.0` and `lab-08`. Add shared room state only if horizontal scaling becomes a requirement.
 
 `shared/src/sim/` is the canonical simulation package. It does not import the DOM, canvas, audio, or HUD modules, and both Node and browser tests import it directly. It publishes game notifications only through an injected `emit(type, detail)` function; `client/src/main.ts` connects that boundary to the typed client event bus. The live game uses mutable entity objects and captures previous-state data for interpolation. The Lab 01 `integrate(ship, input, dt)` pure plain-object API remains as a compatibility adapter using the same physics tuning and is still covered by regression tests.
 

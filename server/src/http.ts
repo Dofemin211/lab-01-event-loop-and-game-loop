@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from 'node:fs';
 import { access, realpath, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { performance } from 'node:perf_hooks';
@@ -12,8 +13,18 @@ import type { ServerConfig } from './config.ts';
 import { resolveReplayPath } from './log/replay.ts';
 import type { MatchManager } from './match.ts';
 import type { RoomConfig, RoomManager } from './rooms.ts';
+import type { WebSocketSecurityStats } from './ws-security.ts';
+import {
+  ActiveConnectionLimiter,
+  WebSocketSecurityMetrics,
+  hasSingleOriginHeader,
+  isAllowedWebSocketOrigin,
+  resolveClientIp,
+} from './ws-security.ts';
 
-type Logger = Pick<Console, 'error'>;
+type Logger = Pick<Console, 'error'> & {
+  event?(name: string, fields?: Readonly<Record<string, string | number | boolean>>): void;
+};
 
 const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -22,6 +33,7 @@ const MIME_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
   ['.mp3', 'audio/mpeg'],
+  ['.png', 'image/png'],
   ['.svg', 'image/svg+xml'],
   ['.wav', 'audio/wav'],
   ['.webp', 'image/webp'],
@@ -217,6 +229,19 @@ export interface HttpServerOptions {
   readonly config: ServerConfig;
   readonly roomManager: RoomManager;
   readonly matchManager: MatchManager;
+  readonly lifecycle: {
+    readonly version: string;
+    readonly gitSha: string;
+    ready: boolean;
+    draining: boolean;
+  };
+  readonly securityStats: () => WebSocketSecurityStats;
+  readonly trafficStats: () => {
+    readonly receivedMessagesPerSecond: number;
+    readonly receivedBytesPerSecond: number;
+    readonly sentMessagesPerSecond: number;
+    readonly sentBytesPerSecond: number;
+  };
   readonly logger?: Logger;
 }
 
@@ -224,6 +249,9 @@ export function createHttpServer({
   config,
   roomManager,
   matchManager,
+  lifecycle,
+  securityStats,
+  trafficStats,
   logger = console,
 }: HttpServerOptions): Server {
   const processStartedAt = performance.now();
@@ -253,7 +281,23 @@ export function createHttpServer({
           response.setHeader('Allow', 'GET');
           throw new HttpError(405, 'Method not allowed.');
         }
-        sendJson(response, 200, { status: 'ok' });
+        sendJson(response, 200, {
+          status: 'ok',
+          version: lifecycle.version,
+          gitSha: lifecycle.gitSha,
+        });
+        return;
+      }
+      if (url.pathname === '/ready') {
+        if (request.method !== 'GET') {
+          response.setHeader('Allow', 'GET');
+          throw new HttpError(405, 'Method not allowed.');
+        }
+        sendJson(response, lifecycle.ready && !lifecycle.draining ? 200 : 503, {
+          status: lifecycle.ready && !lifecycle.draining ? 'ready' : 'not_ready',
+          version: lifecycle.version,
+          gitSha: lifecycle.gitSha,
+        });
         return;
       }
       if (url.pathname === '/api/stats') {
@@ -262,6 +306,79 @@ export function createHttpServer({
           throw new HttpError(405, 'Method not allowed.');
         }
         sendJson(response, 200, matchManager.stats());
+        return;
+      }
+      if (url.pathname === '/api/security-stats') {
+        if (request.method !== 'GET') {
+          response.setHeader('Allow', 'GET');
+          throw new HttpError(405, 'Method not allowed.');
+        }
+        sendJson(response, 200, securityStats());
+        return;
+      }
+      if (url.pathname === '/metrics') {
+        if (request.method !== 'GET') {
+          response.setHeader('Allow', 'GET');
+          throw new HttpError(405, 'Method not allowed.');
+        }
+        const now = performance.now();
+        const elapsedMs = Math.max(1, now - processStartedAt);
+        const cpu = process.cpuUsage(cpuStartedAt);
+        const eventLoop = performance.eventLoopUtilization(eventLoopStartedAt);
+        const memory = process.memoryUsage();
+        const rooms = [...roomManager.rooms.values()];
+        const matchStats = matchManager.stats();
+        const security = securityStats();
+        const traffic = trafficStats();
+        const p99 = Math.max(0, ...matchStats.map((match) => match.tickDurationPercentilesMs.p99));
+        const lines = [
+          '# HELP game_uptime_seconds Process uptime in seconds.',
+          '# TYPE game_uptime_seconds gauge',
+          `game_uptime_seconds ${(elapsedMs / 1000).toFixed(3)}`,
+          '# HELP game_rooms Number of active rooms.',
+          '# TYPE game_rooms gauge',
+          `game_rooms ${rooms.length}`,
+          '# HELP game_players Number of connected room players.',
+          '# TYPE game_players gauge',
+          `game_players ${rooms.reduce((total, room) => total + room.players.size, 0)}`,
+          '# HELP game_websocket_connections Number of active WebSocket connections.',
+          '# TYPE game_websocket_connections gauge',
+          `game_websocket_connections ${security.activeConnections}`,
+          '# HELP game_websocket_messages_received_per_second Incoming WebSocket messages per second over the recent window.',
+          '# TYPE game_websocket_messages_received_per_second gauge',
+          `game_websocket_messages_received_per_second ${traffic.receivedMessagesPerSecond.toFixed(3)}`,
+          '# HELP game_websocket_bytes_received_per_second Incoming WebSocket bytes per second over the recent window.',
+          '# TYPE game_websocket_bytes_received_per_second gauge',
+          `game_websocket_bytes_received_per_second ${traffic.receivedBytesPerSecond.toFixed(3)}`,
+          '# HELP game_websocket_messages_sent_per_second Outgoing WebSocket messages per second over the recent window.',
+          '# TYPE game_websocket_messages_sent_per_second gauge',
+          `game_websocket_messages_sent_per_second ${traffic.sentMessagesPerSecond.toFixed(3)}`,
+          '# HELP game_websocket_bytes_sent_per_second Outgoing WebSocket bytes per second over the recent window.',
+          '# TYPE game_websocket_bytes_sent_per_second gauge',
+          `game_websocket_bytes_sent_per_second ${traffic.sentBytesPerSecond.toFixed(3)}`,
+          '# HELP game_tick_duration_p99_ms Maximum room tick duration p99 in milliseconds.',
+          '# TYPE game_tick_duration_p99_ms gauge',
+          `game_tick_duration_p99_ms ${p99.toFixed(4)}`,
+          '# HELP game_event_loop_utilization Node.js event loop utilization.',
+          '# TYPE game_event_loop_utilization gauge',
+          `game_event_loop_utilization ${eventLoop.utilization.toFixed(6)}`,
+          '# HELP game_process_resident_memory_bytes Resident memory in bytes.',
+          '# TYPE game_process_resident_memory_bytes gauge',
+          `game_process_resident_memory_bytes ${memory.rss}`,
+          '# HELP game_process_cpu_percent_of_one_core CPU percentage of one core since startup.',
+          '# TYPE game_process_cpu_percent_of_one_core gauge',
+          `game_process_cpu_percent_of_one_core ${(((cpu.user + cpu.system) / (elapsedMs * 1000)) * 100).toFixed(3)}`,
+          '# HELP game_websocket_rejections_total Rejected WebSocket requests/messages by fixed reason.',
+          '# TYPE game_websocket_rejections_total counter',
+          ...Object.entries(security.rejections).map(
+            ([reason, count]) => `game_websocket_rejections_total{reason="${reason}"} ${count}`,
+          ),
+        ];
+        response.writeHead(200, {
+          'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        response.end(`${lines.join('\n')}\n`);
         return;
       }
       if (url.pathname === '/api/performance') {
@@ -469,26 +586,94 @@ function createRssSampler(logDir: string, replayId: string): RssSampler {
 export function attachWebSocketUpgrade(
   server: Server,
   wss: WebSocketServer,
+  isDraining: () => boolean,
+  config: ServerConfig,
+  connectionLimiter: ActiveConnectionLimiter,
+  securityMetrics: WebSocketSecurityMetrics,
   logger: Logger = console,
 ): void {
   server.on('upgrade', (request, socket, head) => {
-    socket.on('error', (error) => logger.error('WebSocket handshake socket error:', error.message));
+    let upgraded = false;
+    const reject = (reason: 'origin_rejected' | 'ip_limit_exceeded' | 'invalid_handshake') => {
+      securityMetrics.recordRejection(reason);
+      logger.event?.('websocket.rejected', { reason });
+    };
+    socket.once('error', (error) => {
+      if (!upgraded) reject('invalid_handshake');
+      logger.error('WebSocket handshake socket error:', error.message);
+    });
+    if (isDraining()) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      return;
+    }
     let pathname;
     try {
       pathname = new URL(request.url ?? '', 'http://localhost').pathname;
     } catch {
-      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      reject('invalid_handshake');
+      rejectUpgrade(socket, 400, 'Bad Request');
       return;
     }
     if (pathname !== '/ws') {
-      socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+      reject('invalid_handshake');
+      rejectUpgrade(socket, 404, 'Not Found');
       return;
     }
-    wss.handleUpgrade(request, socket, head, (webSocket: WebSocket) => {
-      wss.emit('connection', webSocket, request);
-    });
+    if (!hasSingleOriginHeader(request)) {
+      reject('origin_rejected');
+      rejectUpgrade(socket, 403, 'Forbidden');
+      return;
+    }
+    const origin = request.headers.origin;
+    if (!isAllowedWebSocketOrigin(origin, request.headers.host, config)) {
+      reject('origin_rejected');
+      rejectUpgrade(socket, 403, 'Forbidden');
+      return;
+    }
+    const clientIp = resolveClientIp(request, config);
+    if (!clientIp) {
+      reject('invalid_handshake');
+      rejectUpgrade(socket, 400, 'Bad Request');
+      return;
+    }
+    const releaseConnection = connectionLimiter.reserve(clientIp);
+    if (!releaseConnection) {
+      reject('ip_limit_exceeded');
+      rejectUpgrade(socket, 429, 'Too Many Connections');
+      return;
+    }
+    socket.once('close', releaseConnection);
+    try {
+      wss.handleUpgrade(request, socket, head, (webSocket: WebSocket) => {
+        upgraded = true;
+        wss.emit('connection', webSocket, request);
+      });
+    } catch (error: unknown) {
+      reject('invalid_handshake');
+      logger.error(
+        'Could not complete the WebSocket handshake:',
+        error instanceof Error ? error.message : String(error),
+      );
+      rejectUpgrade(socket, 400, 'Bad Request');
+      releaseConnection();
+    }
+  });
+  server.on('clientError', () => rejectHandshake(securityMetrics, logger));
+  wss.on('wsClientError', (error, socket) => {
+    rejectHandshake(securityMetrics, logger);
+    logger.error('Invalid WebSocket handshake:', error.message);
+    rejectUpgrade(socket, 400, 'Bad Request');
   });
   wss.on('error', (error) => logger.error('WebSocket server error:', error.message));
+}
+
+function rejectHandshake(metrics: WebSocketSecurityMetrics, logger: Logger): void {
+  metrics.recordRejection('invalid_handshake');
+  logger.event?.('websocket.rejected', { reason: 'invalid_handshake' });
+}
+
+function rejectUpgrade(socket: Duplex, status: number, reason: string): void {
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
 }
 
 export function createWebSocketServer(config: ServerConfig): WebSocketServer {

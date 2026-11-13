@@ -906,3 +906,9 @@ const disconnectHudOnUnload = () => {
   disconnectHud();
 };
 window.addEventListener('pagehide', disconnectHudOnUnload, { once: true });
+
+if ('serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+    console.error('Offline app shell could not be registered:', errorText(error));
+  });
+}

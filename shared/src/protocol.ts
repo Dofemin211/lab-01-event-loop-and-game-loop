@@ -136,6 +136,11 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('error'),
     message: z.string().min(1),
   }),
+  z.strictObject({
+    version: z.literal(CONTROL_PROTOCOL_VERSION),
+    type: z.literal('shutdown'),
+    message: z.string().min(1),
+  }),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;

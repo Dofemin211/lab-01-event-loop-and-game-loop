@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "outDir": "dist/server-runtime",
+    "declaration": false,
+    "sourceMap": true
+  },
+  "include": ["server/src/**/*.ts", "shared/src/**/*.ts"],
+  "exclude": [
+    "server/src/log/backpressure-experiment.ts",
+    "server/src/log/unsafe-backpressure-demo.ts"
+  ]
+}

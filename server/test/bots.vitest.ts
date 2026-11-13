@@ -76,7 +76,30 @@ test('bot HTTP endpoint adds bots, rejects malformed counts, and removes bots', 
     maxPlayers: 3,
     arena: { asteroidCount: 0, seed: 4 },
   });
-  const server = createHttpServer({ config, roomManager, matchManager, logger: { error() {} } });
+  const server = createHttpServer({
+    config,
+    roomManager,
+    matchManager,
+    lifecycle: { version: 'test', gitSha: 'test', ready: true, draining: false },
+    securityStats: () => ({
+      activeConnections: 0,
+      trackedIps: 0,
+      rejections: {
+        origin_rejected: 0,
+        ip_limit_exceeded: 0,
+        invalid_handshake: 0,
+        rate_limited: 0,
+        payload_rejected: 0,
+      },
+    }),
+    trafficStats: () => ({
+      receivedMessagesPerSecond: 0,
+      receivedBytesPerSecond: 0,
+      sentMessagesPerSecond: 0,
+      sentBytesPerSecond: 0,
+    }),
+    logger: { error() {} },
+  });
   server.listen(config.port, config.host);
   await once(server, 'listening');
   const address = server.address();

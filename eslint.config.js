@@ -20,7 +20,7 @@ export default [
     },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.{js,mjs}'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
@@ -60,6 +60,15 @@ export default [
         WebSocket: 'readonly',
         WebSocketPair: 'readonly',
         window: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['client/public/sw.js'],
+    languageOptions: {
+      globals: {
+        caches: 'readonly',
+        self: 'readonly',
       },
     },
   },

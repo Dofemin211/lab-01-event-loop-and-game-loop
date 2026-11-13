@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Dogfight — Multiplayer Space Flight",
+  "short_name": "Dogfight",
+  "description": "A small multiplayer space-flight game and JavaScript learning project.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07111d",
+  "theme_color": "#07111d",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "/icons/dogfight-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/dogfight-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:tools
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run coverage
+      - run: npm run build
+      - run: npm run smoke:production
+      - run: npm run e2e
+      - name: Require release commit on main
+        shell: bash
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::Release tag must point to a commit already contained in origin/main."
+            exit 1
+          }
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Expected a semantic version tag such as v1.0.0."
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Build release image
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.value }}
+          SHA: ${{ github.sha }}
+        run: |
+          image="$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          docker build \
+            --build-arg APP_VERSION="$VERSION" \
+            --build-arg GIT_SHA="$SHA" \
+            --tag "$image:$VERSION" \
+            --tag "$image:$SHA" \
+            .
+          size="$(docker image inspect "$image:$VERSION" --format '{{.Size}}')"
+          echo "Runtime image size: $size bytes"
+          if [ "$size" -ge 209715200 ]; then
+            echo "::error::Production image must be smaller than 200 MiB."
+            exit 1
+          fi
+      - name: Log in to GitHub Container Registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Publish version and immutable SHA tags
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.value }}
+          SHA: ${{ github.sha }}
+        run: |
+          image="$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')"
+          docker push "$image:$VERSION"
+          docker push "$image:$SHA"
+
+  deploy:
+    needs: publish
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$SSH_PRIVATE_KEY" || { echo "::error::Missing DEPLOY_SSH_PRIVATE_KEY."; exit 1; }
+          test -n "$DEPLOY_KNOWN_HOSTS" || { echo "::error::Missing pinned DEPLOY_KNOWN_HOSTS."; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Pull and restart the single production instance
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          SHA: ${{ github.sha }}
+        run: |
+          test -n "$DEPLOY_HOST" || { echo "::error::Missing DEPLOY_HOST."; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "::error::Missing DEPLOY_USER."; exit 1; }
+          test -n "$DEPLOY_PATH" || { echo "::error::Missing DEPLOY_PATH."; exit 1; }
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && IMAGE_TAG='$SHA' docker compose pull dogfight && IMAGE_TAG='$SHA' docker compose up -d --no-deps --wait --wait-timeout 120 dogfight"

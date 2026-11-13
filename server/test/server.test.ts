@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { TestContext } from 'node:test';
+import type { OutgoingHttpHeaders } from 'node:http';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -15,6 +16,7 @@ import { createConfig } from '../src/config.ts';
 import type { ServerConfig } from '../src/config.ts';
 import { createApplication } from '../src/index.ts';
 import type { RoomConfig } from '../src/rooms.ts';
+import { ActiveConnectionLimiter, normalizeIpAddress } from '../src/ws-security.ts';
 import { z } from 'zod';
 
 const quietLogger = { error() {}, info() {} };
@@ -27,7 +29,11 @@ const roomDefinition = {
 
 const roomListSchema = z.object({ rooms: z.array(z.object({ id: z.string() })) });
 const createdRoomSchema = z.object({ room: z.object({ name: z.string() }) });
-const healthSchema = z.object({ status: z.string() });
+const healthSchema = z.object({
+  status: z.string(),
+  version: z.string(),
+  gitSha: z.string(),
+});
 const statsSchema = z.array(z.object({ tickRate: z.number() }));
 
 interface SetupOptions extends Partial<ServerConfig> {
@@ -72,7 +78,12 @@ async function setup(t: TestContext, options: SetupOptions = {}) {
     ...room,
     maxPlayers: Math.min(room.maxPlayers ?? config.maxPlayersPerRoom, config.maxPlayersPerRoom),
   }));
-  const app = createApplication({ config, logger: quietLogger, initialRooms: rooms });
+  const app = createApplication({
+    config,
+    logger: quietLogger,
+    initialRooms: rooms,
+    buildInfo: { version: 'test-version', gitSha: 'test-sha' },
+  });
   const address = await app.start();
   if (!address || typeof address === 'string') {
     throw new Error('The test server did not bind to a network address.');
@@ -90,6 +101,37 @@ function openSocket(url: string): Promise<WebSocket> {
   const socket = new WebSocket(url);
   socket.on('error', () => {});
   return once(socket, 'open').then(() => socket);
+}
+
+function openSocketWithHeaders(url: string, headers: Record<string, string>): Promise<WebSocket> {
+  const socket = new WebSocket(url, { headers });
+  socket.on('error', () => {});
+  return once(socket, 'open').then(() => socket);
+}
+
+function expectHandshakeRejection(
+  url: string,
+  headers: OutgoingHttpHeaders,
+  expectedStatus: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url, { headers });
+    socket.on('error', () => {});
+    socket.once('unexpected-response', (_request, response) => {
+      response.resume();
+      socket.terminate();
+      try {
+        assert.equal(response.statusCode, expectedStatus);
+        resolve();
+      } catch (error: unknown) {
+        reject(error);
+      }
+    });
+    socket.once('open', () => {
+      socket.close();
+      reject(new Error(`Expected the WebSocket handshake to return HTTP ${expectedStatus}.`));
+    });
+  });
 }
 
 function nextMessage<Type extends ServerMessageType>(
@@ -193,6 +235,15 @@ function waitForClose(socket: WebSocket, timeoutMs = 1500): Promise<number | nul
   });
 }
 
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail('Timed out waiting for the condition.');
+}
+
 function rawGet(
   port: string,
   requestPath: string,
@@ -219,10 +270,22 @@ function parseJson(text: string): unknown {
 }
 
 test('HTTP server serves health, validated rooms, static files and safe error statuses', async (t) => {
-  const { baseUrl, clientDistDir, temp } = await setup(t);
+  const { app, baseUrl, clientDistDir, temp } = await setup(t);
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await readJson(health, healthSchema), { status: 'ok' });
+  assert.deepEqual(await readJson(health, healthSchema), {
+    status: 'ok',
+    version: 'test-version',
+    gitSha: 'test-sha',
+  });
+  const ready = await fetch(`${baseUrl}/ready`);
+  assert.equal(ready.status, 200);
+  assert.equal((await readJson(ready, healthSchema)).status, 'ready');
+  app.readiness.ready = false;
+  app.readiness.draining = true;
+  assert.equal((await fetch(`${baseUrl}/ready`)).status, 503);
+  app.readiness.ready = true;
+  app.readiness.draining = false;
 
   const rooms = await fetch(`${baseUrl}/api/rooms`);
   assert.equal(rooms.status, 200);
@@ -281,7 +344,143 @@ test('HTTP server serves health, validated rooms, static files and safe error st
   );
   assert.equal((await fetch(`${baseUrl}/api/rooms`, { method: 'DELETE' })).status, 405);
   assert.equal((await fetch(`${baseUrl}/health`, { method: 'POST' })).status, 405);
+  const securityStats = await fetch(`${baseUrl}/api/security-stats`);
+  assert.equal(securityStats.status, 200);
+  assert.deepEqual(await securityStats.json(), {
+    activeConnections: 0,
+    trackedIps: 0,
+    rejections: {
+      origin_rejected: 0,
+      ip_limit_exceeded: 0,
+      invalid_handshake: 0,
+      rate_limited: 0,
+      payload_rejected: 0,
+    },
+  });
+  const metricsResponse = await fetch(`${baseUrl}/metrics`);
+  assert.equal(metricsResponse.status, 200);
+  assert.match(metricsResponse.headers.get('content-type') ?? '', /text\/plain/);
+  const metrics = await metricsResponse.text();
+  for (const metric of [
+    'game_players ',
+    'game_rooms ',
+    'game_websocket_messages_received_per_second ',
+    'game_websocket_bytes_sent_per_second ',
+    'game_tick_duration_p99_ms ',
+    'game_event_loop_utilization ',
+    'game_process_resident_memory_bytes ',
+    'game_websocket_rejections_total{reason="origin_rejected"} ',
+  ]) {
+    assert.ok(metrics.includes(metric), `Metrics endpoint is missing ${metric}.`);
+  }
+  assert.match(metrics, /game_players 0/);
   assert.ok(clientDistDir);
+});
+
+test('WebSocket Origin policy allows exact configured origins and rejects invalid, missing, and unlisted origins', async (t) => {
+  const { wsUrl, app } = await setup(t, {
+    nodeEnv: 'production',
+    allowedOrigins: ['https://game.example', 'https://admin.example'],
+  });
+  for (const origin of ['https://game.example', 'https://admin.example']) {
+    const socket = await new Promise<WebSocket>((resolve, reject) => {
+      const client = new WebSocket(wsUrl, { headers: { Origin: origin } });
+      client.on('error', () => {});
+      client.once('open', () => resolve(client));
+      client.once('unexpected-response', (_request, response) => {
+        response.resume();
+        reject(new Error(`Allowed origin was rejected with HTTP ${response.statusCode}.`));
+      });
+    });
+    socket.close();
+    await waitForClose(socket);
+  }
+  await expectHandshakeRejection(wsUrl, { Origin: 'https://attacker.example' }, 403);
+  await expectHandshakeRejection(wsUrl, {}, 403);
+  await expectHandshakeRejection(wsUrl, { Origin: 'null' }, 403);
+  await expectHandshakeRejection(wsUrl, { Origin: 'not an origin' }, 403);
+  await expectHandshakeRejection(
+    wsUrl,
+    { Origin: ['https://game.example', 'https://game.example'] },
+    403,
+  );
+  assert.equal(app.securityMetrics.snapshot(0, 0).rejections.origin_rejected, 5);
+});
+
+test('production WebSocket listener rejects clients when its Origin allowlist is empty', async (t) => {
+  const { wsUrl, app } = await setup(t, { nodeEnv: 'production', allowedOrigins: [] });
+  await expectHandshakeRejection(wsUrl, { Origin: 'https://game.example' }, 403);
+  await expectHandshakeRejection(wsUrl, {}, 403);
+  assert.equal(app.securityMetrics.snapshot(0, 0).rejections.origin_rejected, 2);
+});
+
+test('development WebSocket listener permits missing and same-host loopback Origins only', async (t) => {
+  const { wsUrl } = await setup(t);
+  const localOrigin = new URL(wsUrl).origin.replace(/^ws:/, 'http:');
+  const socket = await new Promise<WebSocket>((resolve, reject) => {
+    const client = new WebSocket(wsUrl, { headers: { Origin: localOrigin } });
+    client.on('error', () => {});
+    client.once('open', () => resolve(client));
+    client.once('unexpected-response', (_request, response) => {
+      response.resume();
+      reject(new Error(`Local development origin was rejected with HTTP ${response.statusCode}.`));
+    });
+  });
+  socket.close();
+  await waitForClose(socket);
+
+  const noOrigin = await openSocket(wsUrl);
+  noOrigin.close();
+  await waitForClose(noOrigin);
+  await expectHandshakeRejection(wsUrl, { Origin: 'http://attacker.example' }, 403);
+});
+
+test('per-IP limits ignore untrusted forwarded headers and release connections exactly once', async (t) => {
+  const { app, wsUrl } = await setup(t, { maxConnectionsPerIp: 1 });
+  const first = await openSocket(wsUrl);
+  assert.equal(app.connectionLimiter.activeConnections, 1);
+  await expectHandshakeRejection(wsUrl, { 'X-Forwarded-For': '203.0.113.99' }, 429);
+  assert.equal(app.securityMetrics.snapshot(1, 1).rejections.ip_limit_exceeded, 1);
+
+  first.close();
+  await waitForClose(first);
+  await waitForCondition(() => app.connectionLimiter.activeConnections === 0);
+  assert.equal(app.connectionLimiter.trackedIps, 0);
+  const afterDisconnect = await openSocket(wsUrl);
+  afterDisconnect.close();
+  await waitForClose(afterDisconnect);
+
+  const limiter = new ActiveConnectionLimiter(1, 1);
+  const release = limiter.reserve('192.0.2.1');
+  assert.ok(release);
+  assert.equal(limiter.reserve('192.0.2.2'), null);
+  release();
+  release();
+  assert.equal(limiter.activeConnections, 0);
+  assert.equal(limiter.trackedIps, 0);
+  const nextIp = limiter.reserve('192.0.2.2');
+  assert.ok(nextIp);
+  nextIp();
+  assert.equal(normalizeIpAddress('::ffff:192.0.2.1'), normalizeIpAddress('::ffff:c000:201'));
+});
+
+test('trusted proxy forwarding is honored only for configured proxy socket addresses', async (t) => {
+  const { app, wsUrl } = await setup(t, {
+    maxConnectionsPerIp: 1,
+    trustedProxyIps: ['127.0.0.1', '127.0.0.2'],
+  });
+  const first = await openSocketWithHeaders(wsUrl, {
+    'X-Forwarded-For': '198.51.100.1, 127.0.0.2',
+  });
+  const second = await openSocketWithHeaders(wsUrl, {
+    'X-Forwarded-For': '198.51.100.2, 127.0.0.2',
+  });
+  assert.equal(app.connectionLimiter.activeConnections, 2);
+  await expectHandshakeRejection(wsUrl, { 'X-Forwarded-For': '198.51.100.1, 127.0.0.2' }, 429);
+  first.terminate();
+  second.terminate();
+  await Promise.all([waitForClose(first), waitForClose(second)]);
+  assert.equal(app.connectionLimiter.activeConnections, 0);
 });
 
 test('two WebSocket clients join, receive rosters and chat, then disconnect cleanup removes the room', async (t) => {
@@ -386,7 +585,7 @@ test('binary clients receive authoritative snapshots and can control only throug
 });
 
 test('WebSocket join timeout, invalid JSON, oversized messages and token bucket close connections safely', async (t) => {
-  const { wsUrl } = await setup(t, {
+  const { app, wsUrl } = await setup(t, {
     maxPayloadBytes: 1024,
     messageRatePerSecond: 1,
     joinTimeoutMs: 100,
@@ -411,6 +610,12 @@ test('WebSocket join timeout, invalid JSON, oversized messages and token bucket 
   rateLimited.send(JSON.stringify({ version: 0, type: 'chat', text: 'too soon' }));
   const rateCode = await waitForClose(rateLimited);
   assert.equal(rateCode, 1008);
+  const securityStats = await app.securityMetrics.snapshot(
+    app.connectionLimiter.activeConnections,
+    app.connectionLimiter.trackedIps,
+  );
+  assert.equal(securityStats.rejections.payload_rejected, 2);
+  assert.equal(securityStats.rejections.rate_limited, 1);
 });
 
 test('room player cap rejects a second participant and graceful shutdown closes connected sockets', async (t) => {
@@ -428,8 +633,15 @@ test('room player cap rejects a second participant and graceful shutdown closes 
   assert.equal(secondCode, 1008);
 
   const firstClose = waitForClose(first);
-  await app.shutdown();
+  const shutdownNotice = nextMessage(first, 'shutdown');
+  const shutdown = app.shutdown();
+  assert.equal(app.readiness.ready, false);
+  assert.equal(app.readiness.draining, true);
+  const notice = await shutdownNotice;
+  assert.match(notice.message, /reconnecting/i);
+  await shutdown;
   const firstCode = await firstClose;
   assert.equal(firstCode, 1001);
   assert.equal(app.server.listening, false);
+  await assert.rejects(openSocket(wsUrl));
 });

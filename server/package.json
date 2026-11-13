@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "start": "node --env-file-if-exists=../../.env --import ../../scripts/production-env.mjs ../../dist/server-runtime/server/src/index.js",
     "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
     "test": "tsx --test test/*.test.ts",
     "experiment:backpressure": "tsx src/log/backpressure-experiment.ts",

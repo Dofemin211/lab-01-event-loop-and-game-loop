@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -20,7 +23,84 @@ jobs:
       - run: npm run typecheck
       - run: npm run typecheck:tools
       - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - run: npm run coverage
       - run: npm run build
+      - run: npm run smoke:production
       - run: npm run e2e
+
+  container:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and start the production Compose stack
+        run: |
+          cp .env.example .env
+          docker compose up --build -d --wait --wait-timeout 120
+          docker compose ps
+      - name: Verify image size, health, metrics, and non-root runtime
+        shell: bash
+        run: |
+          image_id="$(docker compose images -q dogfight)"
+          image_size="$(docker image inspect "$image_id" --format '{{.Size}}')"
+          echo "Runtime image size: $image_size bytes"
+          test "$image_size" -lt 209715200
+          test "$(docker inspect "$(docker compose ps -q dogfight)" --format '{{.Config.User}}')" = node
+          docker compose exec -T dogfight node -e \
+            "Promise.all(['/health','/ready','/metrics'].map(async path => { const response = await fetch('http://127.0.0.1:8080' + path); if (!response.ok) throw new Error(path + ' returned ' + response.status); if (path === '/metrics' && !(await response.text()).includes('game_websocket_rejections_total')) throw new Error('Metrics exposition is incomplete'); }))"
+          curl --fail --insecure https://localhost:8443/health
+          curl --fail --insecure https://localhost:8443/ready
+      - name: Verify WebSocket shutdown through the HTTPS proxy
+        shell: bash
+        run: |
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { spawnSync } from "node:child_process";
+            import WebSocket from "ws";
+            const socket = new WebSocket("wss://localhost:8443/ws", {
+              rejectUnauthorized: false,
+              headers: { Origin: "https://localhost:8443" }
+            });
+            let joined = false;
+            let shutdown = false;
+            const closed = new Promise((resolve, reject) => {
+              socket.on("error", reject);
+              socket.on("open", () => socket.send(JSON.stringify({
+                version: 0, type: "join", room: "training-sector", name: "CI smoke"
+              })));
+              socket.on("message", (raw) => {
+                const message = JSON.parse(raw.toString());
+                if (message.type === "joined" && !joined) {
+                  joined = true;
+                  const stopped = spawnSync("docker", ["compose", "stop", "-t", "15", "dogfight"], { encoding: "utf8" });
+                  if (stopped.status !== 0) return reject(new Error(stopped.stderr || "docker compose stop failed"));
+                }
+                if (message.type === "shutdown") shutdown = true;
+              });
+              socket.on("close", (code) => resolve(code));
+            });
+            const closeCode = await closed;
+            assert.equal(joined, true, "client did not join through Caddy");
+            assert.equal(shutdown, true, "client did not receive shutdown notice");
+            assert.equal(closeCode, 1001, "server did not close the WebSocket with 1001");
+            console.log("HTTPS proxy WebSocket shutdown message and close code verified.");
+          '
+          docker compose start dogfight
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --insecure https://localhost:8443/ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Application did not become ready after restart."
+          exit 1
+      - name: Stop Compose services
+        if: always()
+        run: docker compose down --volumes

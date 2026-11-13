@@ -1,0 +1,43 @@
+{
+  "recordedAt": "2026-11-13T10:00:01.5753902+02:00",
+  "host": {
+    "platform": "win32",
+    "architecture": "x64",
+    "nodeVersion": "v22.14.0"
+  },
+  "scenario": "paced-garbage-frame-flood",
+  "parameters": {
+    "targetFramesPerSecond": 1000,
+    "scheduledIntervalMs": 1,
+    "roomUnderAttack": "flood-room",
+    "controlRoom": "control-room"
+  },
+  "result": {
+    "attemptedFramesBeforeClose": 5,
+    "observedClientAttemptRatePerSecond": 840.2,
+    "elapsedMs": 6.824,
+    "serverPayloadRejections": 1,
+    "attackerCloseCode": 1007,
+    "tickP99Ms": {
+      "attackRoomBefore": 3.3302,
+      "attackRoomAfter": 3.3302,
+      "controlRoomBefore": 2.0535,
+      "controlRoomAfter": 2.0535
+    },
+    "interpretation": "The server closed on the first malformed frame and remaining scheduled attempts were cancelled. The test did not deliver 1000 malformed frames to the server in one second."
+  },
+  "clientDisconnectScenario": {
+    "passed": true,
+    "verified": [
+      "departing player removed",
+      "per-IP connection slot released",
+      "surviving room continued ticking",
+      "rejoining player received a new session identity"
+    ]
+  },
+  "osSignal": {
+    "platform": "Windows",
+    "linuxSigtermTested": false,
+    "note": "The production smoke test uses the Windows signal shim; Docker/WSL is unavailable for Linux container SIGTERM validation."
+  }
+}

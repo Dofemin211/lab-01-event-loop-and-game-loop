@@ -278,6 +278,9 @@ export class MultiplayerConnection extends EventTarget {
       }
       emit(this, 'error', { message: message.message });
     }
+    if (message.type === 'shutdown') {
+      emit(this, 'error', { message: message.message });
+    }
     emit(this, 'message', message);
     emit(this, message.type, message);
   }

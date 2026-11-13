@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,17 @@ const PerformanceSchema = z.object({
   memoryBytes: z.object({
     rss: z.number().int().nonnegative(),
     heapUsed: z.number().int().nonnegative(),
+  }),
+});
+const SecurityStatsSchema = z.object({
+  activeConnections: z.number().int().nonnegative(),
+  trackedIps: z.number().int().nonnegative(),
+  rejections: z.object({
+    origin_rejected: z.number().int().nonnegative(),
+    ip_limit_exceeded: z.number().int().nonnegative(),
+    invalid_handshake: z.number().int().nonnegative(),
+    rate_limited: z.number().int().nonnegative(),
+    payload_rejected: z.number().int().nonnegative(),
   }),
 });
 
@@ -116,7 +127,9 @@ async function runScenario(
   const joinedSet = new Set<WebSocket>();
 
   for (let index = 0; index < clientCount; index += 1) {
-    const socket = new WebSocket(new URL('/ws', baseUrl.replace(/^http/, 'ws')));
+    const socket = new WebSocket(new URL('/ws', baseUrl.replace(/^http/, 'ws')), {
+      headers: { Origin: process.env.LOAD_ORIGIN ?? new URL(baseUrl).origin },
+    });
     const roomId = roomIds[Math.floor(index / 8)];
     if (!roomId) throw new Error('Load-test room assignment is missing.');
     sockets.push(socket);
@@ -302,6 +315,7 @@ if (
 }
 
 const results: ScenarioResult[] = [];
+const securityBefore = await readJson(baseUrl, '/api/security-stats', SecurityStatsSchema);
 for (const [index, count] of clientCounts.entries()) {
   const result = await runScenario(baseUrl, count, durationSeconds, index + 1);
   results.push(result);
@@ -309,11 +323,29 @@ for (const [index, count] of clientCounts.entries()) {
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const securityAfter = await readJson(baseUrl, '/api/security-stats', SecurityStatsSchema);
+const evidencePath = path.resolve(
+  root,
+  process.env.LOAD_EVIDENCE_FILE ?? 'evidence/lab07-load.json',
+);
+await mkdir(path.dirname(evidencePath), { recursive: true });
 await writeFile(
-  path.join(root, 'evidence', 'lab07-load.json'),
+  evidencePath,
   `${JSON.stringify(
     {
       measuredAt: new Date().toISOString(),
+      parameters: {
+        baseUrl,
+        origin: process.env.LOAD_ORIGIN ?? new URL(baseUrl).origin,
+        durationSecondsPerScenario: durationSeconds,
+        clientCounts,
+        nodeEnv: process.env.NODE_ENV ?? 'unknown',
+        maxConnectionsPerIp: process.env.MAX_CONNECTIONS_PER_IP ?? 'server-configured',
+      },
+      security: {
+        before: securityBefore,
+        after: securityAfter,
+      },
       host: {
         platform: process.platform,
         architecture: process.arch,
@@ -321,7 +353,6 @@ await writeFile(
         logicalCores: os.cpus().length,
         totalMemoryBytes: os.totalmem(),
       },
-      durationSecondsPerScenario: durationSeconds,
       scenarios: results,
     },
     null,

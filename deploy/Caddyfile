@@ -1,0 +1,9 @@
+http://{$DOMAIN}:{$CADDY_HTTP_PORT} {
+  redir {$HTTPS_URL}{uri} 308
+}
+
+https://{$DOMAIN}:{$CADDY_HTTPS_PORT} {
+  reverse_proxy dogfight:8080 {
+    header_up X-Forwarded-For {http.request.remote.host}
+  }
+}
